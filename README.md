@@ -45,6 +45,9 @@ convunits units length
 convunits units force
 ```
 
+The complete generated catalog is available in
+[SUPPORTED_UNITS.md](SUPPORTED_UNITS.md).
+
 Control output:
 
 ```sh
