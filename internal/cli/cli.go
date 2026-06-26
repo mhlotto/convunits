@@ -891,22 +891,23 @@ Usage:
 
 Examples:
   convunits 10kg lb
-  convunits 60 mph km/h
+  convunits 60mph km/h
   convunits 1N 'kg*m/s^2'
+  convunits 1Rsun km
   convunits 100F C
   convunits 30mpg L/100km
   convunits solve 10N s --given mass=2kg --given distance=5m
   convunits scale 5 beaufort m/s
-  convunits size a4 mm
-  convunits shoe eu 43 cm
+  convunits paper a4 mm
+  convunits shoe us-men 10 yd
   convunits wire 12awg mm
   convunits drill '#7' mm
-  convunits sieve '#40' mm
+  convunits sieve 'No. 200' um
   convunits formula escape-velocity --mass 1Mearth --radius 1Re km/s
+  convunits --json 10kg lb
 
 Unit expressions support *, /, integer powers, and parentheses. Parsing is case-sensitive.
-The catalog below lists symbols, long names, categories, dimensions, and aliases.
-
+Use "convunits units", "convunits scales", and "convunits formulas" for listings.
+See README.md and SUPPORTED_UNITS.md for detailed examples and limitations.
 `)
-	_ = c.listUnits(nil)
 }
