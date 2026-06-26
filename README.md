@@ -21,10 +21,26 @@ The tool supports:
 - paper-size lookups
 - wire gauges, drill sizes, and sieve openings
 - named formula calculations
-- JSON output for normal conversions, scale/solve mode, formulas, paper, wire,
-  drill, and sieve commands
+- JSON output for normal conversions, solve, scale, formula, compare, recipe,
+  eval, explain, paper, wire, drill, and sieve commands
 
 See [SUPPORTED_UNITS.md](SUPPORTED_UNITS.md) for a categorized reference.
+
+## Command map
+
+Common entry points:
+
+```sh
+convunits 10kg lb
+convunits compare 38in banana Rj
+convunits eval '1kg*c^2 -> J'
+convunits explain 60mph m/s
+convunits recipe 1cup flour g
+```
+
+Other dedicated commands cover `solve`, `scale`, `shoe`, `paper`, `wire`,
+`drill`, `sieve`, and `formula` workflows. Use `--help` on `compare`,
+`recipe`, `eval`, `explain`, `formula`, and `scale` for command-specific help.
 
 ## Install / build
 
@@ -384,6 +400,7 @@ Formula and weird commands also support JSON:
 
 ```sh
 convunits --json formula bmi --mass 180lb --height 6ft bmi
+convunits scale --json 5 beaufort mph
 convunits --json compare 38in banana smoot Rj
 convunits --json eval '38in / Rj'
 convunits --json explain 60mph m/s
@@ -394,7 +411,19 @@ convunits --json drill '#7' mm
 convunits --json sieve 'No. 200' um
 ```
 
+Shoe-size output is currently text-only.
+
 Text output is unchanged unless JSON is requested.
+
+## Design boundaries
+
+- Normal conversions are dimensionally strict.
+- Affine temperatures use normal conversion mode, not eval arithmetic.
+- Nonlinear scales use `scale`.
+- Lookup/table conversions use dedicated commands.
+- Cooking conversions are approximate.
+- Ancient, human-scale, and astronomical approximations are marked approximate.
+- Currency is unsupported.
 
 ## Design notes and limitations
 

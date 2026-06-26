@@ -148,6 +148,10 @@ func (c *CLI) Run(args []string) int {
 }
 
 func (c *CLI) runScale(args []string, globalJSON bool) int {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		c.scaleHelp()
+		return 0
+	}
 	precision, scientific, asJSON, positional, err := parseScaleOptions(args)
 	if err != nil {
 		fmt.Fprintln(c.Err, "error:", err)
@@ -193,6 +197,23 @@ func (c *CLI) runScale(args []string, globalJSON bool) int {
 	}
 	fmt.Fprintln(c.Out, formatScaleResult(result, precision, scientific))
 	return 0
+}
+
+func (c *CLI) scaleHelp() {
+	fmt.Fprint(c.Out, `convunits scale converts nonlinear, logarithmic, ordinal, and lookup scales.
+
+Usage:
+  convunits scale [--precision N] [--scientific] [--json] VALUE INPUT-SCALE OUTPUT-SCALE
+  convunits scales [category]
+
+Examples:
+  convunits scale 7 pH mol/L
+  convunits scale 60 dB power-ratio
+  convunits scale 5 beaufort mph
+  convunits scale 12 awg diameter-mm
+
+Scale conversions are separate from the normal dimensional unit engine.
+`)
 }
 
 type compareOutput struct {
@@ -1125,6 +1146,10 @@ func (c *CLI) runFormula(args []string, globalJSON bool) int {
 		asJSON = true
 		args = args[1:]
 	}
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		c.formulaHelp()
+		return 0
+	}
 	if len(args) < 2 {
 		fmt.Fprintln(c.Err, "error: usage: convunits formula NAME [--ARG VALUEUNIT ...] OUTPUT-UNIT")
 		return 2
@@ -1204,6 +1229,22 @@ func (c *CLI) runFormula(args []string, globalJSON bool) int {
 	}
 	fmt.Fprintf(c.Out, "%s%s %s\n", prefix, units.FormatValue(result.Value, 10, false), result.Unit)
 	return 0
+}
+
+func (c *CLI) formulaHelp() {
+	fmt.Fprint(c.Out, `convunits formula computes named formulas with unit-checked inputs.
+
+Usage:
+  convunits formula NAME [--ARG VALUEUNIT ...] OUTPUT-UNIT
+  convunits formulas
+
+Examples:
+  convunits formula escape-velocity --mass 1Mearth --radius 1Re km/s
+  convunits formula schwarzschild-radius --mass 1Msun km
+  convunits formula bmi --mass 180lb --height 6ft bmi
+
+Use "convunits formulas" to list available formula names and arguments.
+`)
 }
 
 func (c *CLI) listFormulas(args []string) int {
