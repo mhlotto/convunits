@@ -100,7 +100,7 @@ func (c *CLI) Run(args []string) int {
 		return c.listFormulas(args[1:])
 	}
 	if args[0] == "shoe" {
-		return c.runShoe(args[1:])
+		return c.runShoe(args[1:], globalJSON)
 	}
 	fs := flag.NewFlagSet("convunits", flag.ContinueOnError)
 	fs.SetOutput(c.Err)
@@ -932,6 +932,10 @@ func (c *CLI) listScales(args []string) int {
 }
 
 func (c *CLI) runSize(args []string, globalJSON bool) int {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		c.paperHelp()
+		return 0
+	}
 	asJSON, positional := parseJSONOnly(args)
 	asJSON = asJSON || globalJSON
 	if len(positional) != 2 {
@@ -982,6 +986,21 @@ func (c *CLI) runSize(args []string, globalJSON bool) int {
 	return 0
 }
 
+func (c *CLI) paperHelp() {
+	fmt.Fprint(c.Out, `convunits paper looks up paper dimensions.
+
+Usage:
+  convunits paper PAPER-SIZE OUTPUT-LENGTH-UNIT
+  convunits size PAPER-SIZE OUTPUT-LENGTH-UNIT
+  convunits papers [iso|us|photo]
+
+Examples:
+  convunits paper a4 mm
+  convunits paper letter in
+  convunits --json paper a4 mm
+`)
+}
+
 func (c *CLI) listPapers(args []string) int {
 	if len(args) > 1 {
 		fmt.Fprintln(c.Err, "error: usage: convunits papers [iso|us|photo]")
@@ -1009,6 +1028,10 @@ func (c *CLI) listPapers(args []string) int {
 }
 
 func (c *CLI) runWire(args []string, globalJSON bool) int {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		c.wireHelp()
+		return 0
+	}
 	asJSON, positional := parseJSONOnly(args)
 	asJSON = asJSON || globalJSON
 	if len(positional) != 2 {
@@ -1028,7 +1051,25 @@ func (c *CLI) runWire(args []string, globalJSON bool) int {
 	return c.printLengthResult(meters, positional[1], "wire", positional[0], "diameter", true, asJSON)
 }
 
+func (c *CLI) wireHelp() {
+	fmt.Fprint(c.Out, `convunits wire converts AWG gauge to approximate conductor diameter.
+
+Usage:
+  convunits wire GAUGE OUTPUT-LENGTH-UNIT
+  convunits wires
+
+Examples:
+  convunits wire 12awg mm
+  convunits wire 0000awg in
+  convunits --json wire 12awg mm
+`)
+}
+
 func (c *CLI) runDrill(args []string, globalJSON bool) int {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		c.drillHelp()
+		return 0
+	}
 	asJSON, positional := parseJSONOnly(args)
 	asJSON = asJSON || globalJSON
 	if len(positional) != 2 {
@@ -1043,7 +1084,25 @@ func (c *CLI) runDrill(args []string, globalJSON bool) int {
 	return c.printLengthResult(meters, positional[1], "drill", positional[0], "diameter", true, asJSON)
 }
 
+func (c *CLI) drillHelp() {
+	fmt.Fprint(c.Out, `convunits drill looks up drill bit diameter.
+
+Usage:
+  convunits drill SIZE OUTPUT-LENGTH-UNIT
+  convunits drills [number|letter|fractional]
+
+Examples:
+  convunits drill '#7' mm
+  convunits drill '1/4' mm
+  convunits --json drill '#7' mm
+`)
+}
+
 func (c *CLI) runSieve(args []string, globalJSON bool) int {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		c.sieveHelp()
+		return 0
+	}
 	asJSON, positional := parseJSONOnly(args)
 	asJSON = asJSON || globalJSON
 	if len(positional) != 2 {
@@ -1056,6 +1115,20 @@ func (c *CLI) runSieve(args []string, globalJSON bool) int {
 		return 1
 	}
 	return c.printLengthResult(meters, positional[1], "sieve", positional[0], "opening", true, asJSON)
+}
+
+func (c *CLI) sieveHelp() {
+	fmt.Fprint(c.Out, `convunits sieve looks up approximate nominal sieve openings.
+
+Usage:
+  convunits sieve SIZE OUTPUT-LENGTH-UNIT
+  convunits sieves
+
+Examples:
+  convunits sieve 'No. 200' um
+  convunits sieve '#40' mm
+  convunits --json sieve 'No. 200' um
+`)
 }
 
 func (c *CLI) printLengthResult(meters float64, outputUnit, command, input, label string, approximate, asJSON bool) int {
@@ -1263,34 +1336,74 @@ func (c *CLI) listFormulas(args []string) int {
 	return 0
 }
 
-func (c *CLI) runShoe(args []string) int {
-	if len(args) == 1 && args[0] == "systems" {
+func (c *CLI) runShoe(args []string, globalJSON bool) int {
+	asJSON, positional := parseJSONOnly(args)
+	asJSON = asJSON || globalJSON
+	if len(positional) == 1 && (positional[0] == "--help" || positional[0] == "-h") {
+		c.shoeHelp()
+		return 0
+	}
+	if len(positional) == 1 && positional[0] == "systems" {
 		for _, system := range shoes.Systems() {
 			fmt.Fprintln(c.Out, system)
 		}
 		return 0
 	}
-	if len(args) != 3 {
+	if len(positional) != 3 {
 		fmt.Fprintln(c.Err, "error: usage: convunits shoe SYSTEM SIZE OUTPUT-LENGTH-UNIT\n       convunits shoe systems")
 		return 2
 	}
-	size, err := strconv.ParseFloat(args[1], 64)
+	size, err := strconv.ParseFloat(positional[1], 64)
 	if err != nil {
-		fmt.Fprintf(c.Err, "error: invalid shoe size %q\n", args[1])
+		fmt.Fprintf(c.Err, "error: invalid shoe size %q\n", positional[1])
 		return 2
 	}
-	meters, err := shoes.FootLengthMeters(args[0], size)
+	meters, err := shoes.FootLengthMeters(positional[0], size)
 	if err != nil {
 		fmt.Fprintln(c.Err, "error:", err)
 		return 1
 	}
-	converted, err := c.Registry.Convert(meters, "m", args[2])
+	converted, err := c.Registry.Convert(meters, "m", positional[2])
 	if err != nil {
 		fmt.Fprintln(c.Err, "error: shoe output unit must be length:", err)
 		return 1
 	}
-	fmt.Fprintf(c.Out, "approximately %s %s foot length\n", units.FormatValue(converted.Value, 10, false), args[2])
+	if asJSON {
+		payload := struct {
+			Command string `json:"command"`
+			Input   struct {
+				System string  `json:"system"`
+				Size   float64 `json:"size"`
+			} `json:"input"`
+			Output struct {
+				Value       float64 `json:"value"`
+				Unit        string  `json:"unit"`
+				Quantity    string  `json:"quantity"`
+				Approximate bool    `json:"approximate"`
+			} `json:"output"`
+		}{Command: "shoe"}
+		payload.Input.System, payload.Input.Size = positional[0], size
+		payload.Output.Value, payload.Output.Unit, payload.Output.Quantity, payload.Output.Approximate = converted.Value, positional[2], "foot length", true
+		return c.encodeJSON(payload)
+	}
+	fmt.Fprintf(c.Out, "approximately %s %s foot length\n", units.FormatValue(converted.Value, 10, false), positional[2])
 	return 0
+}
+
+func (c *CLI) shoeHelp() {
+	fmt.Fprint(c.Out, `convunits shoe estimates foot length from a shoe-size system.
+
+Usage:
+  convunits shoe SYSTEM SIZE OUTPUT-LENGTH-UNIT
+  convunits shoe systems
+
+Examples:
+  convunits shoe us-men 10 yd
+  convunits shoe eu 43 cm
+  convunits --json shoe us-men 10 yd
+
+Shoe conversions are approximate foot-length mappings, not fit recommendations.
+`)
 }
 
 func (c *CLI) runSolve(args []string, globalJSON bool) int {

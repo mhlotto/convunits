@@ -217,6 +217,56 @@ convunits explain 60mph m/s
 convunits recipe 1cup flour g
 ```
 
+## Scale families
+
+Scale conversions are separate from normal dimensional conversion:
+
+- dB/bel to `power-ratio` or `amplitude-ratio`
+- pH to hydrogen-ion concentration (`mol/L`, `Molar`, etc.)
+- magnitude differences to `brightness-ratio`
+- Beaufort wind-force lookup ranges
+- AWG numeric gauge to wire diameter scales
+
+List the generated scale table with:
+
+```sh
+convunits scales
+convunits scales ratio
+```
+
+## Formula names
+
+Formula mode currently includes:
+
+- `bmi`
+- `circle-area`
+- `cylinder-volume`
+- `density`
+- `energy`
+- `escape-velocity`
+- `flow-rate`
+- `freefall-time`
+- `gravity-force`
+- `kinetic-energy`
+- `momentum`
+- `orbital-period`
+- `orbital-speed`
+- `pace`
+- `pendulum-period`
+- `power`
+- `pressure`
+- `schwarzschild-radius`
+- `sphere-area`
+- `sphere-volume`
+- `speed`
+- `surface-gravity`
+
+List formula arguments with:
+
+```sh
+convunits formulas
+```
+
 ## Recipe ingredients
 
 Recipe ingredients are approximate cooking density entries, not normal units.
