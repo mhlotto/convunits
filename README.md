@@ -11,6 +11,7 @@ The tool supports:
 
 - scalar, compound, and derived unit conversion
 - unit catalog listing
+- compare mode for expressing one quantity in several compatible units
 - a small force-relation solve mode
 - nonlinear scale conversions
 - approximate shoe-size foot-length mappings
@@ -71,6 +72,34 @@ convunits units force
 
 Parsing is case-sensitive. For example, `b` is a bit, `B` is a byte, `Mb` is a
 megabit, and `MB` is a megabyte.
+
+## Compare mode
+
+Compare mode expresses one quantity in one or more compatible units. It uses
+the normal parser/converter and remains dimensionally strict:
+
+```sh
+convunits compare 38in Rj
+convunits compare 38in banana smoot cubit hand Rj Rsun
+convunits compare 38 in banana smoot Rj
+convunits compare 1earthcircumference marathon
+convunits compare 1olympicpool cup gal
+convunits compare 1Rsun Rj Re LD
+convunits compare 60mph m/s km/h ft/s
+```
+
+Presets skip units that are incompatible with the input:
+
+```sh
+convunits compare 38in --fun
+convunits compare 38in --human
+convunits compare 38in --astronomical
+convunits compare 38in --ancient
+convunits compare 38in --all
+```
+
+Use `--no-limit` with `--all` to print every compatible unit. Approximate
+input or target units are marked as approximate in the output.
 
 ## Compound and derived units
 
@@ -281,6 +310,7 @@ Formula and weird commands also support JSON:
 
 ```sh
 convunits --json formula bmi --mass 180lb --height 6ft bmi
+convunits --json compare 38in banana smoot Rj
 convunits paper --json a4 mm
 convunits --json wire 12awg mm
 convunits --json drill '#7' mm

@@ -36,7 +36,7 @@ func (r *Registry) convertDirect(value float64, input, output string) (Result, e
 				if out.Affine != nil && math.Abs(converted) < 1e-12 {
 					converted = 0
 				}
-				matches = append(matches, Result{Value: converted, Input: in, Output: out, Category: in.Dimension.Category()})
+				matches = append(matches, Result{Value: converted, Input: in, Output: out, Approximate: in.Approximate || out.Approximate, Category: in.Dimension.Category()})
 			}
 		}
 	}

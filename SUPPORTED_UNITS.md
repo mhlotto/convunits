@@ -196,6 +196,7 @@ unit registry:
 - `convunits sieve SIZE UNIT`
 - `convunits scale VALUE INPUT-SCALE OUTPUT-SCALE`
 - `convunits formula NAME --ARG VALUEUNIT OUTPUT-UNIT`
+- `convunits compare VALUEUNIT TARGET-UNIT...`
 
 Examples:
 
@@ -207,6 +208,7 @@ convunits drill '#7' mm
 convunits sieve 'No. 200' um
 convunits scale 5 beaufort mph
 convunits formula bmi --mass 180lb --height 6ft bmi
+convunits compare 38in banana smoot Rj
 ```
 
 ## Unsupported things by design

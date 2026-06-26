@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -42,6 +43,9 @@ func (c *CLI) Run(args []string) int {
 	}
 	if args[0] == "units" {
 		return c.listUnits(args[1:])
+	}
+	if args[0] == "compare" {
+		return c.runCompare(args[1:], globalJSON)
 	}
 	if args[0] == "solve" {
 		return c.runSolve(args[1:], globalJSON)
@@ -177,6 +181,256 @@ func (c *CLI) runScale(args []string, globalJSON bool) int {
 	}
 	fmt.Fprintln(c.Out, formatScaleResult(result, precision, scientific))
 	return 0
+}
+
+type compareOutput struct {
+	value       float64
+	unit        string
+	approximate bool
+}
+
+func (c *CLI) runCompare(args []string, globalJSON bool) int {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		c.compareHelp()
+		return 0
+	}
+	asJSON := globalJSON
+	noLimit := false
+	var presets []string
+	var positional []string
+	for _, arg := range args {
+		switch arg {
+		case "--json":
+			asJSON = true
+		case "--no-limit":
+			noLimit = true
+		case "--fun", "--human", "--astronomical", "--ancient", "--all":
+			presets = append(presets, strings.TrimPrefix(arg, "--"))
+		default:
+			if strings.HasPrefix(arg, "--") {
+				fmt.Fprintf(c.Err, "error: unknown compare option %q\n", arg)
+				return 2
+			}
+			positional = append(positional, arg)
+		}
+	}
+	value, inputUnit, targets, err := parseCompareOperands(positional)
+	if err != nil {
+		fmt.Fprintln(c.Err, "error:", err)
+		return 2
+	}
+	explicitTargets := make(map[string]bool)
+	for _, target := range targets {
+		explicitTargets[target] = true
+	}
+	if err := c.rejectCompareAffine(inputUnit, "input"); err != nil {
+		fmt.Fprintln(c.Err, "error:", err)
+		return 1
+	}
+	for _, preset := range presets {
+		targets = append(targets, c.comparePresetTargets(value, inputUnit, preset, noLimit)...)
+	}
+	targets = uniqueStrings(targets)
+	if len(targets) == 0 {
+		fmt.Fprintln(c.Err, "error: compare requires at least one target unit or compatible preset")
+		return 2
+	}
+	var outputs []compareOutput
+	var failed []string
+	for _, target := range targets {
+		if err := c.rejectCompareAffine(target, "target"); err != nil {
+			if explicitTargets[target] {
+				failed = append(failed, err.Error())
+			}
+			continue
+		}
+		result, err := c.Registry.Convert(value, inputUnit, target)
+		if err != nil {
+			if explicitTargets[target] {
+				failed = append(failed, fmt.Sprintf("%s: %v", target, err))
+			}
+			continue
+		}
+		outputs = append(outputs, compareOutput{value: result.Value, unit: target, approximate: result.Approximate})
+	}
+	if len(failed) > 0 {
+		fmt.Fprintln(c.Err, "error: incompatible compare target:", strings.Join(failed, "; "))
+		return 1
+	}
+	if len(outputs) == 0 {
+		fmt.Fprintln(c.Err, "error: no compare preset units are compatible with input")
+		return 1
+	}
+	if asJSON {
+		payload := struct {
+			Command string `json:"command"`
+			Input   struct {
+				Value float64 `json:"value"`
+				Unit  string  `json:"unit"`
+			} `json:"input"`
+			Outputs []struct {
+				Value       float64 `json:"value"`
+				Unit        string  `json:"unit"`
+				Approximate bool    `json:"approximate"`
+			} `json:"outputs"`
+		}{Command: "compare"}
+		payload.Input.Value, payload.Input.Unit = value, inputUnit
+		for _, output := range outputs {
+			payload.Outputs = append(payload.Outputs, struct {
+				Value       float64 `json:"value"`
+				Unit        string  `json:"unit"`
+				Approximate bool    `json:"approximate"`
+			}{output.value, output.unit, output.approximate})
+		}
+		return c.encodeJSON(payload)
+	}
+	if len(outputs) == 1 {
+		prefix := ""
+		if outputs[0].approximate {
+			prefix = "approximately "
+		}
+		fmt.Fprintf(c.Out, "%s %s = %s%s %s\n", units.FormatValue(value, 10, false), inputUnit, prefix, units.FormatValue(outputs[0].value, 10, false), outputs[0].unit)
+		return 0
+	}
+	fmt.Fprintf(c.Out, "%s %s is:\n", units.FormatValue(value, 10, false), inputUnit)
+	for _, output := range outputs {
+		prefix := ""
+		if output.approximate {
+			prefix = "approximately "
+		}
+		fmt.Fprintf(c.Out, "  %s%s %s\n", prefix, units.FormatValue(output.value, 10, false), output.unit)
+	}
+	return 0
+}
+
+func parseCompareOperands(args []string) (float64, string, []string, error) {
+	if len(args) < 1 {
+		return 0, "", nil, fmt.Errorf("usage: convunits compare <valueunit> <target-unit>...")
+	}
+	if len(args) >= 2 {
+		if value, err := strconv.ParseFloat(args[0], 64); err == nil {
+			return value, args[1], args[2:], nil
+		}
+	}
+	value, unit, err := splitValueUnit(args[0])
+	if err != nil {
+		return 0, "", nil, err
+	}
+	return value, unit, args[1:], nil
+}
+
+func (c *CLI) comparePresetTargets(value float64, inputUnit, preset string, noLimit bool) []string {
+	switch preset {
+	case "fun":
+		targets := []string{"banana", "smoot", "footballfield", "marathon", "olympicpool", "earthcircumference"}
+		return c.compatibleCompareTargets(value, inputUnit, targets, 0)
+	case "human":
+		return c.compatibleCompareTargets(value, inputUnit, []string{"banana", "hand", "cubit", "pace", "span", "smoot", "footballfield", "marathon"}, 0)
+	case "astronomical":
+		return c.compatibleCompareTargets(value, inputUnit, []string{"Re", "Rj", "Rsun", "LD", "au", "ls", "lightmin", "lh", "ld", "ly", "pc"}, 0)
+	case "ancient":
+		return c.compatibleCompareTargets(value, inputUnit, []string{"cubit", "royalcubit", "span", "handbreadth", "fingerbreadth", "pace", "romanfoot", "romanmile", "stadion", "parasang"}, 0)
+	case "all":
+		limit := 30
+		if noLimit {
+			limit = 0
+		}
+		return c.compatibleCompareTargets(value, inputUnit, c.allCompareTargets(), limit)
+	default:
+		return nil
+	}
+}
+
+func (c *CLI) allCompareTargets() []string {
+	unitsList := c.Registry.Units("")
+	sort.SliceStable(unitsList, func(i, j int) bool {
+		pi, pj := compareCategoryPriority(unitsList[i].Category), compareCategoryPriority(unitsList[j].Category)
+		if pi != pj {
+			return pi < pj
+		}
+		return unitsList[i].Symbol < unitsList[j].Symbol
+	})
+	var out []string
+	for _, unit := range unitsList {
+		if unit.Affine {
+			continue
+		}
+		out = append(out, unit.Symbol)
+	}
+	return out
+}
+
+func compareCategoryPriority(category string) int {
+	switch category {
+	case "human-scale", "ancient-length", "historical-length", "nautical-length", "astronomical-length", "astronomical-mass", "astronomical-time":
+		return 0
+	case "length", "mass", "time", "area", "volume", "speed", "acceleration", "force", "energy", "power", "pressure", "flow":
+		return 1
+	default:
+		return 2
+	}
+}
+
+func (c *CLI) compatibleCompareTargets(value float64, inputUnit string, targets []string, limit int) []string {
+	var out []string
+	for _, target := range targets {
+		if _, err := c.Registry.Convert(value, inputUnit, target); err == nil {
+			out = append(out, target)
+			if limit > 0 && len(out) >= limit {
+				break
+			}
+		}
+	}
+	return out
+}
+
+func (c *CLI) rejectCompareAffine(unit, role string) error {
+	candidates, err := c.Registry.ParseCandidates(unit)
+	if err != nil {
+		return fmt.Errorf("%s unit: %w", role, err)
+	}
+	for _, candidate := range candidates {
+		if candidate.Affine != nil {
+			return fmt.Errorf("compare does not treat Celsius/Fahrenheit as ordinary scalar units")
+		}
+	}
+	return nil
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, value := range values {
+		if !seen[value] {
+			seen[value] = true
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func (c *CLI) compareHelp() {
+	fmt.Fprint(c.Out, `convunits compare expresses one quantity in compatible target units.
+
+Usage:
+  convunits compare <valueunit> <target-unit>...
+  convunits compare <value> <input-unit> <target-unit>...
+  convunits compare <valueunit> --fun
+  convunits compare <valueunit> --human
+  convunits compare <valueunit> --astronomical
+  convunits compare <valueunit> --ancient
+  convunits compare <valueunit> --all [--no-limit]
+
+Examples:
+  convunits compare 38in banana smoot cubit Rj
+  convunits compare 38 in banana smoot Rj
+  convunits compare 1Rsun Rj Re LD
+  convunits compare 60mph m/s km/h ft/s
+  convunits --json compare 38in banana smoot Rj
+
+Compare mode uses the normal unit parser/converter and remains dimensionally strict.
+Preset units that do not match the input dimension are skipped.
+`)
 }
 
 func parseScaleOptions(args []string) (int, bool, bool, []string, error) {
@@ -872,6 +1126,7 @@ Usage:
   convunits [--precision N] [--scientific] [--json] <value><input-unit> <output-unit>
   convunits [options] <value> <input-unit> <output-unit>
   convunits units [category]
+  convunits compare <valueunit> <target-unit>...
   convunits solve VALUEUNIT OUTPUTUNIT --given NAME=VALUEUNIT ...
   convunits scale VALUE INPUT-SCALE OUTPUT-SCALE
   convunits scales [category]
@@ -894,6 +1149,7 @@ Examples:
   convunits 60mph km/h
   convunits 1N 'kg*m/s^2'
   convunits 1Rsun km
+  convunits compare 38in banana smoot Rj
   convunits 100F C
   convunits 30mpg L/100km
   convunits solve 10N s --given mass=2kg --given distance=5m

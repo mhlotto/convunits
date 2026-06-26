@@ -54,6 +54,103 @@ func TestJSON(t *testing.T) {
 	}
 }
 
+func TestCompareCLI(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"compare", "38in", "Rj"}, "38 in = approximately 1.380612493e-08 Rj\n"},
+		{[]string{"compare", "38in", "banana", "smoot", "Rj"}, "38 in is:\n  approximately 5.362222222 banana\n  approximately 0.5671641791 smoot\n  approximately 1.380612493e-08 Rj\n"},
+		{[]string{"compare", "38", "in", "banana", "smoot", "Rj"}, "38 in is:\n  approximately 5.362222222 banana\n  approximately 0.5671641791 smoot\n  approximately 1.380612493e-08 Rj\n"},
+		{[]string{"compare", "1earthcircumference", "marathon"}, "1 earthcircumference = approximately 949.7574831 marathon\n"},
+		{[]string{"compare", "1olympicpool", "cup", "gal"}, "1 olympicpool is:\n  approximately 10566882.09 cup\n  approximately 660430.1309 gal\n"},
+		{[]string{"compare", "60mph", "m/s", "km/h", "ft/s"}, "60 mph is:\n  26.8224 m/s\n  96.56064 km/h\n  88 ft/s\n"},
+	}
+	for _, tt := range tests {
+		code, out, err := run(tt.args...)
+		if code != 0 || out != tt.want {
+			t.Errorf("%v: code=%d out=%q err=%q", tt.args, code, out, err)
+		}
+	}
+}
+
+func TestComparePresets(t *testing.T) {
+	code, out, err := run("compare", "38in", "--fun")
+	if code != 0 {
+		t.Fatalf("fun: code=%d err=%q", code, err)
+	}
+	for _, want := range []string{"banana", "smoot", "footballfield", "marathon", "earthcircumference"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--fun output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "olympicpool") {
+		t.Errorf("--fun length output should skip volume-only olympicpool:\n%s", out)
+	}
+
+	code, out, err = run("compare", "38in", "--astronomical")
+	if code != 0 {
+		t.Fatalf("astronomical: code=%d err=%q", code, err)
+	}
+	for _, want := range []string{"Re", "Rj", "Rsun", "LD", "au", "ls", "lightmin", "lh", "ld", "ly", "pc"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--astronomical output missing %q:\n%s", want, out)
+		}
+	}
+
+	code, out, err = run("compare", "1olympicpool", "--fun")
+	if code != 0 || !strings.Contains(out, "olympicpool") || strings.Contains(out, "banana") {
+		t.Fatalf("volume preset skip: code=%d out=%q err=%q", code, out, err)
+	}
+}
+
+func TestCompareErrorsAndHelp(t *testing.T) {
+	code, _, err := run("compare", "38in", "kg")
+	if code == 0 || !strings.Contains(err, "kg: cannot convert") {
+		t.Fatalf("incompatible target: code=%d err=%q", code, err)
+	}
+	code, _, err = run("compare", "38in", "kg", "--fun")
+	if code == 0 || !strings.Contains(err, "kg: cannot convert") {
+		t.Fatalf("explicit incompatible target with preset: code=%d err=%q", code, err)
+	}
+	code, _, err = run("compare", "1kg", "--fun")
+	if code == 0 || !strings.Contains(err, "compatible preset") {
+		t.Fatalf("incompatible preset: code=%d err=%q", code, err)
+	}
+	code, out, err := run("compare", "--help")
+	if code != 0 || err != "" || !strings.Contains(out, "convunits compare <valueunit>") {
+		t.Fatalf("help: code=%d out=%q err=%q", code, out, err)
+	}
+}
+
+func TestCompareJSON(t *testing.T) {
+	code, out, err := run("--json", "compare", "38in", "banana", "smoot", "Rj")
+	if code != 0 {
+		t.Fatalf("code=%d err=%q", code, err)
+	}
+	var got struct {
+		Command string
+		Input   struct {
+			Value float64
+			Unit  string
+		}
+		Outputs []struct {
+			Value       float64
+			Unit        string
+			Approximate bool
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Command != "compare" || got.Input.Value != 38 || got.Input.Unit != "in" || len(got.Outputs) != 3 {
+		t.Fatalf("%+v", got)
+	}
+	if got.Outputs[0].Unit != "banana" || !got.Outputs[0].Approximate || math.Abs(got.Outputs[0].Value-5.362222222) > 1e-9 {
+		t.Fatalf("%+v", got.Outputs[0])
+	}
+}
+
 func TestErrors(t *testing.T) {
 	code, _, err := run("1N", "s")
 	if code == 0 || !strings.Contains(err, "incompatible dimensions") {

@@ -21,7 +21,7 @@ func (r *Registry) ParseCandidates(text string) ([]Expression, error) {
 		}
 		out := make([]Expression, 0, len(all))
 		for _, u := range all {
-			e := Expression{Text: text, Dimension: u.Dimension, Multiplier: u.Multiplier}
+			e := Expression{Text: text, Dimension: u.Dimension, Multiplier: u.Multiplier, Approximate: u.Approximate}
 			if u.Affine {
 				e.Affine = u
 			}
@@ -83,6 +83,7 @@ func (p *parser) expression() (Expression, error) {
 			left.Dimension = left.Dimension.Sub(right.Dimension)
 			left.Multiplier /= right.Multiplier
 		}
+		left.Approximate = left.Approximate || right.Approximate
 	}
 	return left, nil
 }
@@ -119,7 +120,7 @@ func (p *parser) factor() (Expression, error) {
 		if lookupErr != nil {
 			return e, lookupErr
 		}
-		e = Expression{Dimension: u.Dimension, Multiplier: u.Multiplier}
+		e = Expression{Dimension: u.Dimension, Multiplier: u.Multiplier, Approximate: u.Approximate}
 	}
 	p.skipSpace()
 	if p.pos < len(p.s) && p.s[p.pos] == '^' {
