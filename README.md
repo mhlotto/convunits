@@ -14,6 +14,7 @@ The tool supports:
 - compare mode for expressing one quantity in several compatible units
 - a small force-relation solve mode
 - nonlinear scale conversions
+- approximate recipe ingredient mass/volume conversions
 - approximate shoe-size foot-length mappings
 - paper-size lookups
 - wire gauges, drill sizes, and sieve openings
@@ -184,6 +185,34 @@ Notes:
 - AWG exists in `scale` for numeric gauge math and in `wire` for user-friendly
   gauge spellings.
 
+## Recipe conversions
+
+Recipe mode converts between mass and volume for known cooking ingredients
+using approximate bulk density data. Ingredient densities are not part of the
+normal unit registry.
+
+```sh
+convunits recipe 1cup flour g
+convunits recipe 2tbsp butter g
+convunits recipe 100g sugar cup
+convunits recipe 1cup honey oz
+convunits recipe 500ml water lb
+convunits recipe 1cup rice g
+convunits recipe ingredients
+convunits recipe ingredients baking
+```
+
+Mass-to-mass and volume-to-volume recipe conversions use normal unit
+conversion and do not need density:
+
+```sh
+convunits recipe 100g flour oz
+convunits recipe 1cup flour tbsp
+```
+
+Cooking conversions are approximate. They can vary by packing, brand,
+humidity, grind, ingredient form, and measurement method.
+
 ## Shoe sizes
 
 Shoe commands estimate foot length. They are not fit recommendations:
@@ -311,6 +340,7 @@ Formula and weird commands also support JSON:
 ```sh
 convunits --json formula bmi --mass 180lb --height 6ft bmi
 convunits --json compare 38in banana smoot Rj
+convunits --json recipe 1cup flour g
 convunits paper --json a4 mm
 convunits --json wire 12awg mm
 convunits --json drill '#7' mm
@@ -336,6 +366,8 @@ Text output is unchanged unless JSON is requested.
 - Beaufort is range/lookup based.
 - Mohs hardness is not implemented as a conversion.
 - Shoe sizes are approximate foot-length mappings, not fit recommendations.
+- Recipe conversions are approximate cooking estimates, not scientific density
+  definitions.
 - Ancient units are approximate conventions.
 - BMI is only calculated, not interpreted medically.
 

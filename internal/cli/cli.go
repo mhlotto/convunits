@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 
 	formulacalc "convunits/internal/formula"
+	"convunits/internal/recipe"
 	"convunits/internal/scales"
 	"convunits/internal/shoes"
 	"convunits/internal/solve"
@@ -55,6 +56,9 @@ func (c *CLI) Run(args []string) int {
 	}
 	if args[0] == "scales" {
 		return c.listScales(args[1:])
+	}
+	if args[0] == "recipe" {
+		return c.runRecipe(args[1:], globalJSON)
 	}
 	if args[0] == "size" || args[0] == "scale-size" || args[0] == "paper" {
 		return c.runSize(args[1:], globalJSON)
@@ -492,6 +496,193 @@ func (c *CLI) encodeJSON(payload any) int {
 		return 1
 	}
 	return 0
+}
+
+func (c *CLI) runRecipe(args []string, globalJSON bool) int {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		c.recipeHelp()
+		return 0
+	}
+	if args[0] == "ingredients" {
+		return c.listRecipeIngredients(args[1:])
+	}
+	asJSON := globalJSON
+	var positional []string
+	for _, arg := range args {
+		if arg == "--json" {
+			asJSON = true
+			continue
+		}
+		if strings.HasPrefix(arg, "--") {
+			fmt.Fprintf(c.Err, "error: unknown recipe option %q\n", arg)
+			return 2
+		}
+		positional = append(positional, arg)
+	}
+	value, inputUnit, ingredientName, outputUnit, err := parseRecipeOperands(positional)
+	if err != nil {
+		fmt.Fprintln(c.Err, "error:", err)
+		return 2
+	}
+	ingredient, err := recipe.Lookup(ingredientName)
+	if err != nil {
+		fmt.Fprintln(c.Err, "error:", err)
+		return 1
+	}
+	inputKind, err := c.recipeUnitKind(inputUnit)
+	if err != nil {
+		fmt.Fprintln(c.Err, "error: input unit:", err)
+		return 1
+	}
+	outputKind, err := c.recipeUnitKind(outputUnit)
+	if err != nil {
+		fmt.Fprintln(c.Err, "error: output unit:", err)
+		return 1
+	}
+	if ingredient.DensityKgPerM3 <= 0 && inputKind != outputKind {
+		fmt.Fprintf(c.Err, "error: density missing for ingredient %q\n", ingredient.Key)
+		return 1
+	}
+	var outputValue float64
+	switch {
+	case inputKind == outputKind:
+		converted, err := c.Registry.Convert(value, inputUnit, outputUnit)
+		if err != nil {
+			fmt.Fprintln(c.Err, "error:", err)
+			return 1
+		}
+		outputValue = converted.Value
+	case inputKind == "volume" && outputKind == "mass":
+		volume, err := c.Registry.Convert(value, inputUnit, "m^3")
+		if err != nil {
+			fmt.Fprintln(c.Err, "error:", err)
+			return 1
+		}
+		converted, err := c.Registry.Convert(volume.Value*ingredient.DensityKgPerM3, "kg", outputUnit)
+		if err != nil {
+			fmt.Fprintln(c.Err, "error:", err)
+			return 1
+		}
+		outputValue = converted.Value
+	case inputKind == "mass" && outputKind == "volume":
+		mass, err := c.Registry.Convert(value, inputUnit, "kg")
+		if err != nil {
+			fmt.Fprintln(c.Err, "error:", err)
+			return 1
+		}
+		converted, err := c.Registry.Convert(mass.Value/ingredient.DensityKgPerM3, "m^3", outputUnit)
+		if err != nil {
+			fmt.Fprintln(c.Err, "error:", err)
+			return 1
+		}
+		outputValue = converted.Value
+	}
+	if asJSON {
+		payload := struct {
+			Command string `json:"command"`
+			Input   struct {
+				Value      float64 `json:"value"`
+				Unit       string  `json:"unit"`
+				Ingredient string  `json:"ingredient"`
+			} `json:"input"`
+			Output struct {
+				Value       float64 `json:"value"`
+				Unit        string  `json:"unit"`
+				Ingredient  string  `json:"ingredient"`
+				Approximate bool    `json:"approximate"`
+			} `json:"output"`
+			Density struct {
+				Value float64 `json:"value"`
+				Unit  string  `json:"unit"`
+			} `json:"density"`
+		}{Command: "recipe"}
+		payload.Input.Value, payload.Input.Unit, payload.Input.Ingredient = value, inputUnit, ingredientName
+		payload.Output.Value, payload.Output.Unit, payload.Output.Ingredient, payload.Output.Approximate = outputValue, outputUnit, ingredient.Name, true
+		payload.Density.Value, payload.Density.Unit = ingredient.DensityKgPerM3, "kg/m^3"
+		return c.encodeJSON(payload)
+	}
+	fmt.Fprintf(c.Out, "approximately %s %s %s\n", units.FormatValue(outputValue, 10, false), outputUnit, ingredient.Name)
+	return 0
+}
+
+func parseRecipeOperands(args []string) (float64, string, string, string, error) {
+	if len(args) == 3 {
+		value, unit, err := splitValueUnit(args[0])
+		if err != nil {
+			return 0, "", "", "", err
+		}
+		return value, unit, args[1], args[2], nil
+	}
+	if len(args) == 4 {
+		value, err := strconv.ParseFloat(args[0], 64)
+		if err != nil {
+			return 0, "", "", "", fmt.Errorf("invalid recipe amount %q", args[0])
+		}
+		return value, args[1], args[2], args[3], nil
+	}
+	return 0, "", "", "", fmt.Errorf("usage: convunits recipe <amount><unit> <ingredient> <output-unit>")
+}
+
+func (c *CLI) recipeUnitKind(unit string) (string, error) {
+	if _, err := c.Registry.Convert(1, unit, "kg"); err == nil {
+		return "mass", nil
+	}
+	if _, err := c.Registry.Convert(1, unit, "m^3"); err == nil {
+		return "volume", nil
+	}
+	if _, err := c.Registry.ParseCandidates(unit); err != nil {
+		return "", err
+	}
+	return "", fmt.Errorf("%q is not a mass or volume unit", unit)
+}
+
+func (c *CLI) listRecipeIngredients(args []string) int {
+	if len(args) > 1 {
+		fmt.Fprintln(c.Err, "error: usage: convunits recipe ingredients [category]")
+		return 2
+	}
+	category := ""
+	if len(args) == 1 {
+		category = args[0]
+	}
+	list := recipe.Ingredients(category)
+	if len(list) == 0 {
+		fmt.Fprintf(c.Err, "error: unknown or empty recipe ingredient category %q\n", category)
+		return 1
+	}
+	w := tabwriter.NewWriter(c.Out, 0, 4, 2, ' ', 0)
+	for _, ingredient := range list {
+		aliases := strings.Join(ingredient.Aliases, ", ")
+		if aliases == "" {
+			aliases = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", ingredient.Key, ingredient.Name, ingredient.Category, aliases, ingredient.Note)
+	}
+	if err := w.Flush(); err != nil {
+		fmt.Fprintln(c.Err, "error:", err)
+		return 1
+	}
+	return 0
+}
+
+func (c *CLI) recipeHelp() {
+	fmt.Fprint(c.Out, `convunits recipe converts approximate cooking ingredient amounts.
+
+Usage:
+  convunits recipe <amount><unit> <ingredient> <output-unit>
+  convunits recipe <amount> <unit> <ingredient> <output-unit>
+  convunits recipe ingredients [category]
+
+Examples:
+  convunits recipe 1cup flour g
+  convunits recipe 2tbsp butter g
+  convunits recipe 100g sugar cup
+  convunits recipe 500ml water lb
+  convunits --json recipe 1cup flour g
+
+Recipe conversions are approximate and ingredient-specific. Density data is not part
+of the normal unit registry.
+`)
 }
 
 func formatScaleResult(result scales.Result, precision int, scientific bool) string {
@@ -1130,6 +1321,8 @@ Usage:
   convunits solve VALUEUNIT OUTPUTUNIT --given NAME=VALUEUNIT ...
   convunits scale VALUE INPUT-SCALE OUTPUT-SCALE
   convunits scales [category]
+  convunits recipe <amount><unit> <ingredient> <output-unit>
+  convunits recipe ingredients [category]
   convunits size PAPER-SIZE OUTPUT-LENGTH-UNIT   alias for paper
   convunits shoe SYSTEM SIZE OUTPUT-LENGTH-UNIT
   convunits shoe systems
@@ -1154,6 +1347,7 @@ Examples:
   convunits 30mpg L/100km
   convunits solve 10N s --given mass=2kg --given distance=5m
   convunits scale 5 beaufort m/s
+  convunits recipe 1cup flour g
   convunits paper a4 mm
   convunits shoe us-men 10 yd
   convunits wire 12awg mm

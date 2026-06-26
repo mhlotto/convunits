@@ -288,6 +288,96 @@ func TestScaleListing(t *testing.T) {
 	}
 }
 
+func TestRecipeCLI(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"recipe", "1cup", "flour", "g"}, "approximately 120.1868241 g all-purpose flour\n"},
+		{[]string{"recipe", "100g", "flour", "cup"}, "approximately 0.8320379602 cup all-purpose flour\n"},
+		{[]string{"recipe", "2tbsp", "butter", "g"}, "approximately 28.36101485 g butter\n"},
+		{[]string{"recipe", "1cup", "sugar", "g"}, "approximately 199.9170598 g granulated sugar\n"},
+		{[]string{"recipe", "1cup", "honey", "oz"}, "approximately 11.85047432 oz honey\n"},
+		{[]string{"recipe", "500ml", "water", "lb"}, "approximately 1.102311311 lb water\n"},
+		{[]string{"recipe", "1cup", "rice", "g"}, "approximately 186.9047068 g uncooked rice\n"},
+		{[]string{"recipe", "100g", "flour", "oz"}, "approximately 3.527396195 oz all-purpose flour\n"},
+		{[]string{"recipe", "1cup", "flour", "tbsp"}, "approximately 16 tbsp all-purpose flour\n"},
+		{[]string{"recipe", "1", "cup", "flour", "g"}, "approximately 120.1868241 g all-purpose flour\n"},
+	}
+	for _, tt := range tests {
+		code, out, err := run(tt.args...)
+		if code != 0 || out != tt.want {
+			t.Errorf("%v: code=%d out=%q err=%q", tt.args, code, out, err)
+		}
+	}
+}
+
+func TestRecipeErrorsAndListings(t *testing.T) {
+	tests := []struct {
+		args     []string
+		contains string
+	}{
+		{[]string{"recipe", "1cup", "moon-dust", "g"}, "unknown ingredient"},
+		{[]string{"recipe", "1m", "flour", "g"}, "not a mass or volume"},
+		{[]string{"recipe", "1cup", "flour", "m"}, "not a mass or volume"},
+	}
+	for _, tt := range tests {
+		code, _, err := run(tt.args...)
+		if code == 0 || !strings.Contains(err, tt.contains) {
+			t.Errorf("%v: code=%d err=%q", tt.args, code, err)
+		}
+	}
+	code, out, err := run("recipe", "ingredients")
+	if code != 0 || !strings.Contains(out, "all-purpose-flour") || !strings.Contains(out, "flour") || !strings.Contains(out, "kosher-salt") {
+		t.Fatalf("ingredients: code=%d out=%q err=%q", code, out, err)
+	}
+	code, out, err = run("recipe", "ingredients", "baking")
+	if code != 0 || !strings.Contains(out, "all-purpose-flour") || strings.Contains(out, "olive-oil") {
+		t.Fatalf("ingredients baking: code=%d out=%q err=%q", code, out, err)
+	}
+	code, out, err = run("recipe", "--help")
+	if code != 0 || err != "" || !strings.Contains(out, "convunits recipe <amount><unit>") {
+		t.Fatalf("recipe help: code=%d out=%q err=%q", code, out, err)
+	}
+}
+
+func TestRecipeJSON(t *testing.T) {
+	code, out, err := run("--json", "recipe", "1cup", "flour", "g")
+	if code != 0 {
+		t.Fatalf("code=%d err=%q", code, err)
+	}
+	var got struct {
+		Command string
+		Input   struct {
+			Value      float64
+			Unit       string
+			Ingredient string
+		}
+		Output struct {
+			Value       float64
+			Unit        string
+			Ingredient  string
+			Approximate bool
+		}
+		Density struct {
+			Value float64
+			Unit  string
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Command != "recipe" || got.Input.Value != 1 || got.Input.Unit != "cup" || got.Input.Ingredient != "flour" {
+		t.Fatalf("%+v", got)
+	}
+	if got.Output.Unit != "g" || got.Output.Ingredient != "all-purpose flour" || !got.Output.Approximate || math.Abs(got.Output.Value-120.186824142) > 1e-9 {
+		t.Fatalf("%+v", got.Output)
+	}
+	if got.Density.Value != 508 || got.Density.Unit != "kg/m^3" {
+		t.Fatalf("%+v", got.Density)
+	}
+}
+
 func TestPaperSizeCLI(t *testing.T) {
 	tests := []struct {
 		args []string

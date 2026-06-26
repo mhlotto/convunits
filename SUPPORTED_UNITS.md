@@ -197,6 +197,7 @@ unit registry:
 - `convunits scale VALUE INPUT-SCALE OUTPUT-SCALE`
 - `convunits formula NAME --ARG VALUEUNIT OUTPUT-UNIT`
 - `convunits compare VALUEUNIT TARGET-UNIT...`
+- `convunits recipe AMOUNT INGREDIENT OUTPUT-UNIT`
 
 Examples:
 
@@ -209,7 +210,22 @@ convunits sieve 'No. 200' um
 convunits scale 5 beaufort mph
 convunits formula bmi --mass 180lb --height 6ft bmi
 convunits compare 38in banana smoot Rj
+convunits recipe 1cup flour g
 ```
+
+## Recipe ingredients
+
+Recipe ingredients are approximate cooking density entries, not normal units.
+List them with:
+
+```sh
+convunits recipe ingredients
+convunits recipe ingredients baking
+```
+
+Supported categories include liquids, baking, fats, grains, and produce.
+Conversions can vary by packing, brand, humidity, grind, ingredient form, and
+measurement method.
 
 ## Unsupported things by design
 
@@ -220,6 +236,7 @@ convunits compare 38in banana smoot Rj
 - Redshift is not treated as a distance.
 - Mohs hardness is not implemented as a conversion.
 - Shoe sizes are approximate foot-length mappings, not fit recommendations.
+- Recipe conversions are approximate cooking estimates and ingredient-specific.
 - Ancient units are approximate conventions.
 - BMI is only calculated, not interpreted medically.
 
