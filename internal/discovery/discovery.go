@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	"convunits/internal/units"
 	"convunits/internal/weird/drill"
 	"convunits/internal/weird/sieve"
+	"convunits/internal/weird/wire"
 )
 
 type Result struct {
@@ -39,6 +41,7 @@ type AliasMatch struct {
 	DensityUnit   string   `json:"density_unit,omitempty"`
 	MatchedBy     string   `json:"matched_by,omitempty"`
 	MatchedString string   `json:"matched_string,omitempty"`
+	Score         int      `json:"-"`
 }
 
 type Catalog struct {
@@ -55,12 +58,13 @@ func New(registry *units.Registry) *Catalog {
 func (c *Catalog) Search(query, kind string, all bool) []Result {
 	query = strings.TrimSpace(query)
 	kind = strings.TrimSpace(kind)
+	numeric := isNumericLookingQuery(query)
 	var out []Result
 	for _, result := range c.results {
 		if kind != "" && !strings.EqualFold(result.Kind, kind) {
 			continue
 		}
-		score := matchScore(query, result)
+		score := matchScore(query, result, all, numeric)
 		if score == 0 {
 			continue
 		}
@@ -182,6 +186,23 @@ func (c *Catalog) build() []Result {
 			})
 		}
 	}
+	for gauge := -3; gauge <= 40; gauge++ {
+		key := wireGaugeKey(gauge)
+		aliases := []string{"awg" + strings.TrimSuffix(key, "awg")}
+		description := "AWG wire gauge"
+		if diameter, err := wire.DiameterMeters(gauge); err == nil {
+			description = fmt.Sprintf("%.6g mm diameter", diameter*1000)
+		}
+		out = append(out, Result{
+			Kind:        "wire",
+			Key:         key,
+			Name:        "AWG " + strings.TrimSuffix(key, "awg") + " wire gauge",
+			Category:    "wire",
+			Aliases:     aliases,
+			Description: description,
+			Approximate: true,
+		})
+	}
 	for _, entry := range sieve.Entries() {
 		out = append(out, Result{
 			Kind:        "sieve",
@@ -273,12 +294,15 @@ func (c *Catalog) allAliasMatches() []AliasMatch {
 	return out
 }
 
-func matchScore(query string, result Result) int {
+func matchScore(query string, result Result, all bool, numeric bool) int {
 	q := strings.ToLower(query)
 	if q == "" {
 		return 0
 	}
-	best := scoreField(q, result.Key, 100, 90, 60)
+	if numeric && !all {
+		return numericMatchScore(q, result)
+	}
+	best := scoreField(q, result.Key, 100+kindExactBoost(result.Kind), 90, 60)
 	best = max(best, scoreField(q, result.Name, 95, 80, 50))
 	for _, alias := range result.Aliases {
 		best = max(best, scoreField(q, alias, 98, 82, 55))
@@ -287,6 +311,30 @@ func matchScore(query string, result Result) int {
 	best = max(best, scoreField(q, result.Description, 65, 40, 25))
 	best = max(best, scoreField(q, result.Dimension, 60, 35, 20))
 	return best
+}
+
+func numericMatchScore(query string, result Result) int {
+	best := scoreNumericField(query, result.Key, 100)
+	for _, alias := range result.Aliases {
+		best = max(best, scoreNumericField(query, alias, 98))
+	}
+	return best
+}
+
+func scoreNumericField(query, field string, exact int) int {
+	if strings.EqualFold(field, query) {
+		return exact
+	}
+	queryForms := normalizedLookupForms(query)
+	fieldForms := normalizedLookupForms(field)
+	for _, q := range queryForms {
+		for _, f := range fieldForms {
+			if q == f {
+				return exact - 5
+			}
+		}
+	}
+	return 0
 }
 
 func scoreField(query, field string, exact, prefix, substring int) int {
@@ -303,6 +351,76 @@ func scoreField(query, field string, exact, prefix, substring int) int {
 	default:
 		return 0
 	}
+}
+
+var (
+	plainIntegerRE = regexp.MustCompile(`^[0-9]+$`)
+	decimalRE      = regexp.MustCompile(`^[0-9]*\.[0-9]+$|^[0-9]+\.[0-9]*$`)
+	fractionRE     = regexp.MustCompile(`^[0-9]+/[0-9]+$`)
+	numberedRE     = regexp.MustCompile(`^#\s*[0-9]+$|^no\.\s*[0-9]+$`)
+	meshRE         = regexp.MustCompile(`^[0-9]+mesh$|^mesh[0-9]+$`)
+	awgRE          = regexp.MustCompile(`^[0-9]+awg$|^awg[0-9]+$`)
+)
+
+func isNumericLookingQuery(query string) bool {
+	q := normalizeCompact(query)
+	return plainIntegerRE.MatchString(q) ||
+		decimalRE.MatchString(q) ||
+		fractionRE.MatchString(q) ||
+		numberedRE.MatchString(q) ||
+		meshRE.MatchString(q) ||
+		awgRE.MatchString(q)
+}
+
+func normalizedLookupForms(text string) []string {
+	q := normalizeCompact(text)
+	if q == "" {
+		return nil
+	}
+	forms := []string{"raw:" + q}
+	add := func(value string) {
+		if value == "" {
+			return
+		}
+		for _, existing := range forms {
+			if existing == value {
+				return
+			}
+		}
+		forms = append(forms, value)
+	}
+	if strings.HasPrefix(q, "#") {
+		number := strings.TrimPrefix(q, "#")
+		add("numbered:" + number)
+	}
+	if strings.HasPrefix(q, "no.") {
+		number := strings.TrimPrefix(q, "no.")
+		add("numbered:" + number)
+	}
+	if strings.HasSuffix(q, "mesh") {
+		number := strings.TrimSuffix(q, "mesh")
+		add("numbered:" + number)
+	}
+	if strings.HasPrefix(q, "mesh") {
+		number := strings.TrimPrefix(q, "mesh")
+		add("numbered:" + number)
+	}
+	if strings.HasSuffix(q, "awg") {
+		number := strings.TrimSuffix(q, "awg")
+		add("wire:" + number)
+	}
+	if strings.HasPrefix(q, "awg") {
+		number := strings.TrimPrefix(q, "awg")
+		add("wire:" + number)
+	}
+	if plainIntegerRE.MatchString(q) {
+		add("numbered:" + q)
+	}
+	return forms
+}
+
+func normalizeCompact(text string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(text), " ", ""))
 }
 
 func aliasMatches(query string, match AliasMatch) bool {
@@ -325,28 +443,68 @@ func markAliasMatch(query string, match AliasMatch) AliasMatch {
 	switch {
 	case strings.EqualFold(match.Key, query):
 		match.MatchedBy, match.MatchedString = "key", match.Key
+		match.Score = 100 + kindExactBoost(match.Kind)
 	case strings.EqualFold(match.Canonical, query):
 		match.MatchedBy, match.MatchedString = "canonical", match.Canonical
+		match.Score = 95 + kindExactBoost(match.Kind)
 	case strings.EqualFold(match.Name, query):
 		match.MatchedBy, match.MatchedString = "name", match.Name
+		match.Score = 80
 	default:
 		for _, alias := range match.Aliases {
 			if strings.EqualFold(alias, query) {
 				match.MatchedBy, match.MatchedString = "alias", alias
+				match.Score = 90 + kindExactBoost(match.Kind)
 				break
 			}
 		}
+	}
+	if match.Score == 0 {
+		match.Score = kindSortRank(match.Kind)
 	}
 	return match
 }
 
 func sortAliasMatches(matches []AliasMatch) {
 	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].Score != matches[j].Score {
+			return matches[i].Score > matches[j].Score
+		}
 		if matches[i].Kind != matches[j].Kind {
-			return matches[i].Kind < matches[j].Kind
+			return kindSortRank(matches[i].Kind) > kindSortRank(matches[j].Kind)
 		}
 		return strings.ToLower(matches[i].Key) < strings.ToLower(matches[j].Key)
 	})
+}
+
+func kindExactBoost(kind string) int {
+	switch kind {
+	case "unit":
+		return 20
+	case "scale":
+		return 5
+	default:
+		return 0
+	}
+}
+
+func kindSortRank(kind string) int {
+	switch kind {
+	case "unit":
+		return 100
+	case "scale":
+		return 90
+	case "ingredient":
+		return 80
+	case "formula":
+		return 70
+	case "paper", "wire", "drill", "sieve":
+		return 60
+	case "command":
+		return 50
+	default:
+		return 0
+	}
 }
 
 func commandResults() []Result {
@@ -377,6 +535,19 @@ func commandAliasMatches() []AliasMatch {
 		})
 	}
 	return out
+}
+
+func wireGaugeKey(gauge int) string {
+	switch gauge {
+	case -3:
+		return "0000awg"
+	case -2:
+		return "000awg"
+	case -1:
+		return "00awg"
+	default:
+		return fmt.Sprintf("%dawg", gauge)
+	}
 }
 
 type commandInfo struct {

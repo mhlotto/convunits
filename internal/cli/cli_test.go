@@ -84,6 +84,91 @@ func TestDiscoverySearch(t *testing.T) {
 	}
 }
 
+func TestDiscoveryUnitRankingBeforeScale(t *testing.T) {
+	code, out, err := run("aliases", "mph")
+	if code != 0 {
+		t.Fatalf("aliases mph: code=%d err=%q", code, err)
+	}
+	unitIndex := strings.Index(out, "kind: unit")
+	scaleIndex := strings.Index(out, "kind: scale")
+	if unitIndex < 0 || scaleIndex < 0 {
+		t.Fatalf("aliases mph should include unit and scale matches:\n%s", out)
+	}
+	if unitIndex > scaleIndex {
+		t.Fatalf("aliases mph should rank unit before scale:\n%s", out)
+	}
+
+	code, out, err = run("search", "mph")
+	if code != 0 {
+		t.Fatalf("search mph: code=%d err=%q", code, err)
+	}
+	unitIndex = strings.Index(out, "unit")
+	scaleIndex = strings.Index(out, "scale")
+	if unitIndex < 0 || scaleIndex < 0 {
+		t.Fatalf("search mph should include unit and scale matches:\n%s", out)
+	}
+	if unitIndex > scaleIndex {
+		t.Fatalf("search mph should rank unit before scale:\n%s", out)
+	}
+
+	code, out, err = run("search", "beaufort")
+	if code != 0 || !strings.Contains(out, "scale") || !strings.Contains(out, "beaufort") {
+		t.Fatalf("search beaufort: code=%d out=%q err=%q", code, out, err)
+	}
+}
+
+func TestDiscoveryNumericSearch(t *testing.T) {
+	code, out, err := run("search", "38")
+	if code != 0 {
+		t.Fatalf("search 38: code=%d err=%q", code, err)
+	}
+	if !strings.Contains(out, "drill") || !strings.Contains(out, "#38") {
+		t.Fatalf("search 38 should find normalized drill #38:\n%s", out)
+	}
+	for _, noisy := range []string{"#62", "11/32", "19/32", "#400", "0.038"} {
+		if strings.Contains(out, noisy) {
+			t.Fatalf("search 38 returned numeric substring noise %q:\n%s", noisy, out)
+		}
+	}
+
+	code, out, err = run("search", "#38")
+	if code != 0 {
+		t.Fatalf("search #38: code=%d err=%q", code, err)
+	}
+	if !strings.Contains(out, "drill") || !strings.Contains(out, "#38") {
+		t.Fatalf("search #38 should find drill #38:\n%s", out)
+	}
+
+	code, out, err = run("search", "#40")
+	if code != 0 {
+		t.Fatalf("search #40: code=%d err=%q", code, err)
+	}
+	for _, want := range []string{"drill  #40", "sieve  #40", "sieve  No. 40"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("search #40 missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "#400") {
+		t.Fatalf("search #40 should not include #400 without --all:\n%s", out)
+	}
+
+	code, out, err = run("search", "#40", "--all")
+	if code != 0 {
+		t.Fatalf("search #40 --all: code=%d err=%q", code, err)
+	}
+	if !strings.Contains(out, "#400") {
+		t.Fatalf("search #40 --all should allow broad substring matches:\n%s", out)
+	}
+
+	code, out, err = run("search", "38", "--all")
+	if code != 0 {
+		t.Fatalf("search 38 --all: code=%d err=%q", code, err)
+	}
+	if !strings.Contains(out, "0.038") {
+		t.Fatalf("search 38 --all should allow description substring matches:\n%s", out)
+	}
+}
+
 func TestDiscoveryAliases(t *testing.T) {
 	tests := []struct {
 		args  []string
