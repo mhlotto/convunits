@@ -505,7 +505,11 @@ func (c *CLI) runFormula(args []string, globalJSON bool) int {
 	name := args[0]
 	rawInputs := make(map[string]string)
 	var positional []string
-	allowed := map[string]bool{"mass": true, "radius": true, "height": true, "length": true, "gravity": true}
+	allowed := map[string]bool{
+		"area": true, "distance": true, "energy": true, "force": true, "gravity": true,
+		"height": true, "length": true, "mass": true, "mass1": true, "mass2": true,
+		"power": true, "radius": true, "speed": true, "time": true, "volume": true,
+	}
 	for i := 1; i < len(args); i++ {
 		arg := args[i]
 		if !strings.HasPrefix(arg, "--") {

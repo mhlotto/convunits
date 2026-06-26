@@ -440,19 +440,57 @@ func TestFormulaCLI(t *testing.T) {
 		}
 	}
 	code, out, err := run("formulas")
-	if code != 0 || !strings.Contains(out, "escape-velocity") || !strings.Contains(out, "bmi") {
+	if code != 0 || !strings.Contains(out, "escape-velocity") || !strings.Contains(out, "bmi") || !strings.Contains(out, "schwarzschild-radius") || !strings.Contains(out, "flow-rate") {
 		t.Fatalf("code=%d out=%q err=%q", code, out, err)
 	}
 }
 
 func TestFormulaJSON(t *testing.T) {
-	for _, args := range [][]string{
-		{"--json", "formula", "bmi", "--mass", "180lb", "--height", "6ft", "bmi"},
-		{"formula", "--json", "bmi", "--mass", "180lb", "--height", "6ft", "bmi"},
-	} {
-		code, out, err := run(args...)
+	tests := []struct {
+		args      []string
+		formula   string
+		unit      string
+		want      float64
+		tolerance float64
+		inputs    map[string]string
+	}{
+		{
+			args:      []string{"--json", "formula", "bmi", "--mass", "180lb", "--height", "6ft", "bmi"},
+			formula:   "bmi",
+			unit:      "bmi",
+			want:      24.41213818,
+			tolerance: 1e-8,
+			inputs:    map[string]string{"mass": "180lb", "height": "6ft"},
+		},
+		{
+			args:      []string{"formula", "--json", "bmi", "--mass", "180lb", "--height", "6ft", "bmi"},
+			formula:   "bmi",
+			unit:      "bmi",
+			want:      24.41213818,
+			tolerance: 1e-8,
+			inputs:    map[string]string{"mass": "180lb", "height": "6ft"},
+		},
+		{
+			args:      []string{"--json", "formula", "schwarzschild-radius", "--mass", "1Mearth", "mm"},
+			formula:   "schwarzschild-radius",
+			unit:      "mm",
+			want:      8.87,
+			tolerance: .01,
+			inputs:    map[string]string{"mass": "1Mearth"},
+		},
+		{
+			args:      []string{"formula", "--json", "power", "--energy", "1kWh", "--time", "1h", "W"},
+			formula:   "power",
+			unit:      "W",
+			want:      1000,
+			tolerance: 1e-9,
+			inputs:    map[string]string{"energy": "1kWh", "time": "1h"},
+		},
+	}
+	for _, tt := range tests {
+		code, out, err := run(tt.args...)
 		if code != 0 {
-			t.Fatalf("%v: code=%d err=%q", args, code, err)
+			t.Fatalf("%v: code=%d err=%q", tt.args, code, err)
 		}
 		var got struct {
 			Command string
@@ -464,10 +502,15 @@ func TestFormulaJSON(t *testing.T) {
 			}
 		}
 		if err := json.Unmarshal([]byte(out), &got); err != nil {
-			t.Fatalf("%v: %v\n%s", args, err, out)
+			t.Fatalf("%v: %v\n%s", tt.args, err, out)
 		}
-		if got.Command != "formula" || got.Formula != "bmi" || got.Inputs["mass"] != "180lb" || got.Inputs["height"] != "6ft" || got.Output.Unit != "bmi" || math.Abs(got.Output.Value-24.41213818) > 1e-8 {
-			t.Fatalf("%v: %+v", args, got)
+		if got.Command != "formula" || got.Formula != tt.formula || got.Output.Unit != tt.unit || math.Abs(got.Output.Value-tt.want) > tt.tolerance {
+			t.Fatalf("%v: %+v", tt.args, got)
+		}
+		for key, want := range tt.inputs {
+			if got.Inputs[key] != want {
+				t.Fatalf("%v: input %s = %q, want %q", tt.args, key, got.Inputs[key], want)
+			}
 		}
 	}
 }
