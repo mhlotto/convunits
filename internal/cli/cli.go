@@ -10,6 +10,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	evalcalc "convunits/internal/eval"
+	"convunits/internal/explain"
 	formulacalc "convunits/internal/formula"
 	"convunits/internal/recipe"
 	"convunits/internal/scales"
@@ -47,6 +49,12 @@ func (c *CLI) Run(args []string) int {
 	}
 	if args[0] == "compare" {
 		return c.runCompare(args[1:], globalJSON)
+	}
+	if args[0] == "eval" {
+		return c.runEval(args[1:], globalJSON)
+	}
+	if args[0] == "explain" {
+		return c.runExplain(args[1:], globalJSON)
 	}
 	if args[0] == "solve" {
 		return c.runSolve(args[1:], globalJSON)
@@ -434,6 +442,180 @@ Examples:
 
 Compare mode uses the normal unit parser/converter and remains dimensionally strict.
 Preset units that do not match the input dimension are skipped.
+`)
+}
+
+func (c *CLI) runEval(args []string, globalJSON bool) int {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		c.evalHelp()
+		return 0
+	}
+	asJSON := globalJSON
+	var parts []string
+	for _, arg := range args {
+		if arg == "--json" {
+			asJSON = true
+			continue
+		}
+		parts = append(parts, arg)
+	}
+	if len(parts) != 1 {
+		fmt.Fprintln(c.Err, "error: usage: convunits eval '<expression>'")
+		return 2
+	}
+	expression := parts[0]
+	result, err := evalcalc.New(c.Registry).Evaluate(expression)
+	if err != nil {
+		fmt.Fprintln(c.Err, "error:", err)
+		return 1
+	}
+	if asJSON {
+		payload := struct {
+			Command    string `json:"command"`
+			Expression string `json:"expression"`
+			Output     struct {
+				Value       float64 `json:"value"`
+				Unit        string  `json:"unit,omitempty"`
+				Dimension   string  `json:"dimension,omitempty"`
+				Approximate bool    `json:"approximate"`
+			} `json:"output"`
+		}{Command: "eval", Expression: expression}
+		payload.Output.Value = result.Value
+		payload.Output.Unit = result.Unit
+		if result.Unit == "" {
+			payload.Output.Dimension = result.Dimension.String()
+		}
+		payload.Output.Approximate = result.Approximate
+		return c.encodeJSON(payload)
+	}
+	prefix := ""
+	if result.Approximate {
+		prefix = "approximately "
+	}
+	if result.Unit != "" {
+		fmt.Fprintf(c.Out, "%s%s %s\n", prefix, units.FormatValue(result.Value, 10, false), result.Unit)
+		return 0
+	}
+	if result.Dimension == (units.Dimension{}) {
+		fmt.Fprintf(c.Out, "%s%s\n", prefix, units.FormatValue(result.Value, 10, false))
+		return 0
+	}
+	fmt.Fprintf(c.Out, "%s%s %s\n", prefix, units.FormatValue(result.Value, 10, false), result.Dimension)
+	return 0
+}
+
+func (c *CLI) evalHelp() {
+	fmt.Fprint(c.Out, `convunits eval is a small unit-aware calculator.
+
+Usage:
+  convunits eval '<expression>'
+  convunits eval '<expression> -> <output-unit>'
+
+Examples:
+  convunits eval '38in / Rj'
+  convunits eval '1olympicpool / 1cup'
+  convunits eval '2 * pi * 1Re -> km'
+  convunits eval '0.5 * 1500kg * (60mph)^2 -> kWh'
+  convunits eval '1kg * 9.80665m/s^2 -> N'
+  convunits --json eval '38in / Rj'
+
+Supported features are numbers, unit-attached numbers, +, -, *, /, ^,
+parentheses, unary minus, and constants pi, c, G, and g0. Eval is intentionally
+not a programming language: no variables, functions, loops, conditionals, or assignment.
+Recipe ingredient conversions remain under "convunits recipe".
+`)
+}
+
+func (c *CLI) runExplain(args []string, globalJSON bool) int {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		c.explainHelp()
+		return 0
+	}
+	asJSON := globalJSON
+	var positional []string
+	for _, arg := range args {
+		if arg == "--json" {
+			asJSON = true
+			continue
+		}
+		positional = append(positional, arg)
+	}
+	if len(positional) > 0 && unsupportedExplainCommand(positional[0]) {
+		fmt.Fprintf(c.Err, "error: explain does not support %s yet\n", positional[0])
+		return 1
+	}
+	var ex explain.Explanation
+	var err error
+	if len(positional) == 1 && strings.Contains(positional[0], "->") {
+		ex, err = explain.Eval(c.Registry, positional[0])
+	} else {
+		var value float64
+		var inputUnit, outputUnit string
+		value, inputUnit, outputUnit, err = parseOperands(positional)
+		if err == nil {
+			ex, err = explain.Normal(c.Registry, value, inputUnit, outputUnit)
+		}
+	}
+	if err != nil {
+		fmt.Fprintln(c.Err, "error:", err)
+		return 1
+	}
+	if asJSON {
+		type explainInput struct {
+			Value float64 `json:"value"`
+			Unit  string  `json:"unit"`
+		}
+		payload := struct {
+			Command    string        `json:"command"`
+			Expression string        `json:"expression,omitempty"`
+			Input      *explainInput `json:"input,omitempty"`
+			Output     struct {
+				Value       float64 `json:"value"`
+				Unit        string  `json:"unit"`
+				Approximate bool    `json:"approximate"`
+			} `json:"output"`
+			Steps      []string `json:"steps"`
+			Dimensions struct {
+				Input  string `json:"input,omitempty"`
+				Output string `json:"output,omitempty"`
+			} `json:"dimensions,omitempty"`
+		}{Command: "explain", Expression: ex.Expression, Steps: ex.Steps}
+		if ex.Input.Unit != "" {
+			payload.Input = &explainInput{Value: ex.Input.Value, Unit: ex.Input.Unit}
+		}
+		payload.Output.Value, payload.Output.Unit, payload.Output.Approximate = ex.Output.Value, ex.Output.Unit, ex.Output.Approximate
+		payload.Dimensions.Input, payload.Dimensions.Output = ex.Dimensions.Input, ex.Dimensions.Output
+		return c.encodeJSON(payload)
+	}
+	fmt.Fprint(c.Out, explain.Text(ex))
+	return 0
+}
+
+func unsupportedExplainCommand(command string) bool {
+	switch command {
+	case "recipe", "scale", "shoe", "paper", "size", "scale-size", "wire", "drill", "sieve", "formula", "compare":
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *CLI) explainHelp() {
+	fmt.Fprint(c.Out, `convunits explain shows how a conversion or eval expression is derived.
+
+Usage:
+  convunits explain <valueunit> <output-unit>
+  convunits explain <value> <input-unit> <output-unit>
+  convunits explain '<eval-expression> -> <output-unit>'
+
+Examples:
+  convunits explain 60mph m/s
+  convunits explain 1N 'kg*m/s^2'
+  convunits explain '2*pi*1Re -> km'
+  convunits explain '0.5 * 1500kg * (60mph)^2 -> kWh'
+  convunits --json explain 60mph m/s
+
+Explain currently supports normal conversions and eval expressions with ->.
 `)
 }
 
@@ -1318,6 +1500,8 @@ Usage:
   convunits [options] <value> <input-unit> <output-unit>
   convunits units [category]
   convunits compare <valueunit> <target-unit>...
+  convunits eval '<expression>'
+  convunits explain <valueunit> <output-unit>
   convunits solve VALUEUNIT OUTPUTUNIT --given NAME=VALUEUNIT ...
   convunits scale VALUE INPUT-SCALE OUTPUT-SCALE
   convunits scales [category]
@@ -1343,6 +1527,8 @@ Examples:
   convunits 1N 'kg*m/s^2'
   convunits 1Rsun km
   convunits compare 38in banana smoot Rj
+  convunits eval '2*pi*1Re -> km'
+  convunits explain 60mph m/s
   convunits 100F C
   convunits 30mpg L/100km
   convunits solve 10N s --given mass=2kg --given distance=5m

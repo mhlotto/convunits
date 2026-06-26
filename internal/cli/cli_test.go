@@ -151,6 +151,204 @@ func TestCompareJSON(t *testing.T) {
 	}
 }
 
+func TestEvalCLI(t *testing.T) {
+	tests := []struct {
+		expression string
+		want       string
+	}{
+		{"38in / Rj", "approximately 1.380612493e-08\n"},
+		{"1Rsun / 38in", "approximately 720783257.4\n"},
+		{"1olympicpool / 1cup", "approximately 10566882.09\n"},
+		{"2*pi*1Re -> km", "approximately 40030.22888 km\n"},
+		{"0.5 * 1500kg * (60mph)^2 -> kWh", "0.1498835712 kWh\n"},
+		{"1kg * 9.80665m/s^2 -> N", "9.80665 N\n"},
+		{"1m + 1ft -> m", "1.3048 m\n"},
+		{"(10m)^2 -> m^2", "100 m^2\n"},
+		{"1kg*c^2 -> J", "8.987551787e+16 J\n"},
+		{"1kg * c^2 -> J", "8.987551787e+16 J\n"},
+		{"1N*1m -> J", "1 J\n"},
+		{"1N * 1m -> J", "1 J\n"},
+		{"60mph*1h -> mi", "60 mi\n"},
+		{"60mph * 1h -> mi", "60 mi\n"},
+		{"1kg/m^3 -> kg/m^3", "1 kg/m^3\n"},
+		{"1kg*m/s^2 -> N", "1 N\n"},
+		{"1C -> A*s", "1 A*s\n"},
+		{"1F -> A^2*s^4/(kg*m^2)", "1 A^2*s^4/(kg*m^2)\n"},
+		{"1K + 2K -> K", "3 K\n"},
+	}
+	for _, tt := range tests {
+		code, out, err := run("eval", tt.expression)
+		if code != 0 || out != tt.want {
+			t.Errorf("%q: code=%d out=%q err=%q", tt.expression, code, out, err)
+		}
+	}
+}
+
+func TestEvalErrorsAndHelp(t *testing.T) {
+	tests := []struct {
+		expression string
+		contains   string
+	}{
+		{"1m + 1kg", "incompatible dimensions"},
+		{"1m -> kg", "incompatible dimensions"},
+		{"1 / 0", "division by zero"},
+		{"1m / 0", "division by zero"},
+		{"1m / 0s", "division by zero"},
+		{"100C + 1K", "eval does not treat Celsius/Fahrenheit as ordinary scalar units"},
+		{"1F -> C", "eval does not treat Celsius/Fahrenheit as ordinary scalar units"},
+	}
+	for _, tt := range tests {
+		code, _, err := run("eval", tt.expression)
+		if code == 0 || !strings.Contains(err, tt.contains) {
+			t.Errorf("%q: code=%d err=%q", tt.expression, code, err)
+		}
+	}
+	code, out, err := run("eval", "--help")
+	if code != 0 || err != "" || !strings.Contains(out, "convunits eval '<expression>'") {
+		t.Fatalf("eval help: code=%d out=%q err=%q", code, out, err)
+	}
+}
+
+func TestEvalJSON(t *testing.T) {
+	code, out, err := run("--json", "eval", "38in / Rj")
+	if code != 0 {
+		t.Fatalf("code=%d err=%q", code, err)
+	}
+	var got struct {
+		Command    string
+		Expression string
+		Output     struct {
+			Value       float64
+			Dimension   string
+			Approximate bool
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Command != "eval" || got.Expression != "38in / Rj" || got.Output.Dimension != "1" || !got.Output.Approximate || math.Abs(got.Output.Value-1.380612493e-08) > 1e-18 {
+		t.Fatalf("%+v", got)
+	}
+
+	code, out, err = run("--json", "eval", "2*pi*1Re -> km")
+	if code != 0 {
+		t.Fatalf("code=%d err=%q", code, err)
+	}
+	var converted struct {
+		Output struct {
+			Value       float64
+			Unit        string
+			Approximate bool
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &converted); err != nil {
+		t.Fatal(err)
+	}
+	if converted.Output.Unit != "km" || !converted.Output.Approximate || math.Abs(converted.Output.Value-40030.22888) > 1e-5 {
+		t.Fatalf("%+v", converted.Output)
+	}
+}
+
+func TestExplainCLI(t *testing.T) {
+	tests := []struct {
+		args     []string
+		contains []string
+	}{
+		{[]string{"explain", "60mph", "m/s"}, []string{"60 mph -> m/s", "1 mph = 0.44704 m/s", "Result:\n  26.8224 m/s"}},
+		{[]string{"explain", "10kg", "lb"}, []string{"10 kg -> lb", "1 lb = 0.45359237 kg", "22.04622622 lb"}},
+		{[]string{"explain", "1N", "kg*m/s^2"}, []string{"1 N -> kg*m/s^2", "N has dimensions kg*m/s^2", "Result:\n  1 kg*m/s^2"}},
+		{[]string{"explain", "38in", "Rj"}, []string{"38 in -> Rj", "1 Rj = 69911000 m approximately", "approximately 1.380612493e-08 Rj"}},
+		{[]string{"explain", "2*pi*1Re -> km"}, []string{"2*pi*1Re -> km", "pi = 3.141592653589793", "1 Re = 6371008.8 m approximately", "approximately 40030.22888 km"}},
+		{[]string{"explain", "0.5 * 1500kg * (60mph)^2 -> kWh"}, []string{"60 mph = 26.8224 m/s", "0.5 * 1500 kg", "1 kWh = 3600000 J", "0.1498835712 kWh"}},
+	}
+	for _, tt := range tests {
+		code, out, err := run(tt.args...)
+		if code != 0 {
+			t.Fatalf("%v: code=%d err=%q", tt.args, code, err)
+		}
+		for _, want := range tt.contains {
+			if !strings.Contains(out, want) {
+				t.Errorf("%v: output missing %q:\n%s", tt.args, want, out)
+			}
+		}
+	}
+}
+
+func TestExplainJSON(t *testing.T) {
+	code, out, err := run("--json", "explain", "60mph", "m/s")
+	if code != 0 {
+		t.Fatalf("code=%d err=%q", code, err)
+	}
+	var normal struct {
+		Command string
+		Input   struct {
+			Value float64
+			Unit  string
+		}
+		Output struct {
+			Value       float64
+			Unit        string
+			Approximate bool
+		}
+		Steps      []string
+		Dimensions struct {
+			Input, Output string
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &normal); err != nil {
+		t.Fatal(err)
+	}
+	if normal.Command != "explain" || normal.Input.Value != 60 || normal.Input.Unit != "mph" || normal.Output.Value != 26.8224 || normal.Output.Unit != "m/s" || normal.Output.Approximate {
+		t.Fatalf("%+v", normal)
+	}
+	if normal.Dimensions.Input != "m/s" || len(normal.Steps) == 0 {
+		t.Fatalf("%+v", normal)
+	}
+
+	code, out, err = run("--json", "explain", "2*pi*1Re -> km")
+	if code != 0 {
+		t.Fatalf("code=%d err=%q", code, err)
+	}
+	var eval struct {
+		Command    string
+		Expression string
+		Output     struct {
+			Value       float64
+			Unit        string
+			Approximate bool
+		}
+		Steps []string
+	}
+	if err := json.Unmarshal([]byte(out), &eval); err != nil {
+		t.Fatal(err)
+	}
+	if eval.Command != "explain" || eval.Expression != "2*pi*1Re -> km" || eval.Output.Unit != "km" || !eval.Output.Approximate || math.Abs(eval.Output.Value-40030.22888) > 1e-5 || len(eval.Steps) == 0 {
+		t.Fatalf("%+v", eval)
+	}
+}
+
+func TestExplainErrorsAndHelp(t *testing.T) {
+	tests := []struct {
+		args     []string
+		contains string
+	}{
+		{[]string{"explain", "1m", "kg"}, "incompatible dimensions"},
+		{[]string{"explain", "1m + 1kg -> m"}, "incompatible dimensions"},
+		{[]string{"explain", "recipe", "1cup", "flour", "g"}, "explain does not support recipe yet"},
+		{[]string{"explain", "scale", "7", "pH", "mol/L"}, "explain does not support scale yet"},
+	}
+	for _, tt := range tests {
+		code, _, err := run(tt.args...)
+		if code == 0 || !strings.Contains(err, tt.contains) {
+			t.Errorf("%v: code=%d err=%q", tt.args, code, err)
+		}
+	}
+	code, out, err := run("explain", "--help")
+	if code != 0 || err != "" || !strings.Contains(out, "convunits explain <valueunit>") {
+		t.Fatalf("explain help: code=%d out=%q err=%q", code, out, err)
+	}
+}
+
 func TestErrors(t *testing.T) {
 	code, _, err := run("1N", "s")
 	if code == 0 || !strings.Contains(err, "incompatible dimensions") {

@@ -12,6 +12,8 @@ The tool supports:
 - scalar, compound, and derived unit conversion
 - unit catalog listing
 - compare mode for expressing one quantity in several compatible units
+- experimental unit-aware calculator expressions
+- concise explanations for normal conversions and eval expressions
 - a small force-relation solve mode
 - nonlinear scale conversions
 - approximate recipe ingredient mass/volume conversions
@@ -101,6 +103,49 @@ convunits compare 38in --all
 
 Use `--no-limit` with `--all` to print every compatible unit. Approximate
 input or target units are marked as approximate in the output.
+
+## Unit-aware calculator
+
+`eval` is an experimental, intentionally small unit-aware calculator. It is
+useful for quick arithmetic, physical expressions, and silly ratios:
+
+```sh
+convunits eval '38in / Rj'
+convunits eval '1Rsun / 38in'
+convunits eval '1olympicpool / 1cup'
+convunits eval '2 * pi * 1Re -> km'
+convunits eval '0.5 * 1500kg * (60mph)^2 -> kWh'
+convunits eval '1kg * 9.80665m/s^2 -> N'
+```
+
+Supported features are numbers, unit-attached numbers, `+`, `-`, `*`, `/`,
+`^`, parentheses, unary minus, and constants `pi`, `c`, `G`, and `g0`.
+Addition and subtraction require matching dimensions. Powers require
+dimensionless exponents. The optional `->` arrow converts the result to a
+compatible output unit.
+
+`eval` is not a programming language: there are no variables, user-defined
+functions, loops, conditionals, assignment, or scripting. Recipe ingredient
+conversions remain under `convunits recipe`.
+
+## Explain conversions
+
+`explain` shows how a normal conversion or eval expression with `->` is
+derived. It is for user-facing debugging, not symbolic algebra:
+
+```sh
+convunits explain 60mph m/s
+convunits explain 10kg lb
+convunits explain 1N 'kg*m/s^2'
+convunits explain 38in Rj
+convunits explain '2*pi*1Re -> km'
+convunits explain '0.5 * 1500kg * (60mph)^2 -> kWh'
+convunits --json explain 60mph m/s
+```
+
+Explain currently supports normal conversions and eval expressions with an
+output arrow. Recipe, scale, shoe, paper, wire, drill, sieve, formula, and
+compare explanations are not implemented yet.
 
 ## Compound and derived units
 
@@ -340,6 +385,8 @@ Formula and weird commands also support JSON:
 ```sh
 convunits --json formula bmi --mass 180lb --height 6ft bmi
 convunits --json compare 38in banana smoot Rj
+convunits --json eval '38in / Rj'
+convunits --json explain 60mph m/s
 convunits --json recipe 1cup flour g
 convunits paper --json a4 mm
 convunits --json wire 12awg mm

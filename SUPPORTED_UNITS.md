@@ -197,6 +197,8 @@ unit registry:
 - `convunits scale VALUE INPUT-SCALE OUTPUT-SCALE`
 - `convunits formula NAME --ARG VALUEUNIT OUTPUT-UNIT`
 - `convunits compare VALUEUNIT TARGET-UNIT...`
+- `convunits eval 'EXPRESSION [-> OUTPUT-UNIT]'`
+- `convunits explain VALUEUNIT OUTPUT-UNIT`
 - `convunits recipe AMOUNT INGREDIENT OUTPUT-UNIT`
 
 Examples:
@@ -210,6 +212,8 @@ convunits sieve 'No. 200' um
 convunits scale 5 beaufort mph
 convunits formula bmi --mass 180lb --height 6ft bmi
 convunits compare 38in banana smoot Rj
+convunits eval '2*pi*1Re -> km'
+convunits explain 60mph m/s
 convunits recipe 1cup flour g
 ```
 
