@@ -10,6 +10,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"convunits/internal/discovery"
 	evalcalc "convunits/internal/eval"
 	"convunits/internal/explain"
 	formulacalc "convunits/internal/formula"
@@ -46,6 +47,12 @@ func (c *CLI) Run(args []string) int {
 	}
 	if args[0] == "units" {
 		return c.listUnits(args[1:])
+	}
+	if args[0] == "search" {
+		return c.runSearch(args[1:], globalJSON)
+	}
+	if args[0] == "aliases" {
+		return c.runAliases(args[1:], globalJSON)
 	}
 	if args[0] == "compare" {
 		return c.runCompare(args[1:], globalJSON)
@@ -214,6 +221,239 @@ Examples:
 
 Scale conversions are separate from the normal dimensional unit engine.
 `)
+}
+
+func (c *CLI) runSearch(args []string, globalJSON bool) int {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		c.searchHelp()
+		return 0
+	}
+	asJSON := globalJSON
+	all := false
+	kind := ""
+	var positional []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			asJSON = true
+		case arg == "--all":
+			all = true
+		case arg == "--kind":
+			if i+1 >= len(args) {
+				fmt.Fprintln(c.Err, "error: --kind requires a value")
+				return 2
+			}
+			i++
+			kind = args[i]
+		case strings.HasPrefix(arg, "--kind="):
+			kind = strings.TrimPrefix(arg, "--kind=")
+		case strings.HasPrefix(arg, "-"):
+			fmt.Fprintf(c.Err, "error: unknown search option %q\n", arg)
+			return 2
+		default:
+			positional = append(positional, arg)
+		}
+	}
+	if len(positional) != 1 {
+		fmt.Fprintln(c.Err, "error: usage: convunits search QUERY [--all] [--kind KIND] [--json]")
+		return 2
+	}
+	query := positional[0]
+	results := discovery.New(c.Registry).Search(query, kind, all)
+	if asJSON {
+		payload := struct {
+			Command string             `json:"command"`
+			Query   string             `json:"query"`
+			Results []discovery.Result `json:"results"`
+		}{"search", query, results}
+		return c.encodeJSON(payload)
+	}
+	if len(results) == 0 {
+		fmt.Fprintf(c.Err, "error: no search results for %q\n", query)
+		return 1
+	}
+	w := tabwriter.NewWriter(c.Out, 0, 4, 2, ' ', 0)
+	for _, result := range results {
+		details := formatDiscoveryDetails(result.Aliases, result.Description, result.Approximate, result.Dimension)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", result.Kind, result.Key, result.Name, result.Category, details)
+	}
+	if err := w.Flush(); err != nil {
+		fmt.Fprintln(c.Err, "error:", err)
+		return 1
+	}
+	return 0
+}
+
+func (c *CLI) runAliases(args []string, globalJSON bool) int {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		c.aliasesHelp()
+		return 0
+	}
+	asJSON := globalJSON
+	all := false
+	var positional []string
+	for _, arg := range args {
+		switch arg {
+		case "--json":
+			asJSON = true
+		case "--all":
+			all = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				fmt.Fprintf(c.Err, "error: unknown aliases option %q\n", arg)
+				return 2
+			}
+			positional = append(positional, arg)
+		}
+	}
+	if all {
+		if len(positional) != 0 {
+			fmt.Fprintln(c.Err, "error: usage: convunits aliases --all [--json]")
+			return 2
+		}
+		matches := discovery.New(c.Registry).AllAliases()
+		if asJSON {
+			payload := struct {
+				Command string                 `json:"command"`
+				Matches []discovery.AliasMatch `json:"matches"`
+			}{"aliases", matches}
+			return c.encodeJSON(payload)
+		}
+		return c.printAllAliases(matches)
+	}
+	if len(positional) != 1 {
+		fmt.Fprintln(c.Err, "error: usage: convunits aliases [--json] UNIT-OR-ALIAS")
+		return 2
+	}
+	query := positional[0]
+	matches := discovery.New(c.Registry).Aliases(query)
+	if len(matches) == 0 {
+		fmt.Fprintf(c.Err, "error: no aliases or catalog entry found for %q\n", query)
+		return 1
+	}
+	if asJSON {
+		payload := struct {
+			Command string                 `json:"command"`
+			Query   string                 `json:"query"`
+			Matches []discovery.AliasMatch `json:"matches"`
+		}{"aliases", query, matches}
+		return c.encodeJSON(payload)
+	}
+	for i, match := range matches {
+		if i > 0 {
+			fmt.Fprintln(c.Out)
+		}
+		c.printAliasMatch(query, match)
+	}
+	return 0
+}
+
+func (c *CLI) printAllAliases(matches []discovery.AliasMatch) int {
+	w := tabwriter.NewWriter(c.Out, 0, 4, 2, ' ', 0)
+	for _, match := range matches {
+		aliases := strings.Join(match.Aliases, ", ")
+		if aliases == "" {
+			aliases = "none"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\taliases: %s\n", match.Kind, match.Key, match.Name, match.Category, aliases)
+	}
+	if err := w.Flush(); err != nil {
+		fmt.Fprintln(c.Err, "error:", err)
+		return 1
+	}
+	return 0
+}
+
+func (c *CLI) printAliasMatch(query string, match discovery.AliasMatch) {
+	fmt.Fprintln(c.Out, query)
+	fmt.Fprintf(c.Out, "  kind: %s\n", match.Kind)
+	if match.Canonical != "" && match.Canonical != query {
+		fmt.Fprintf(c.Out, "  canonical: %s\n", match.Canonical)
+	}
+	fmt.Fprintf(c.Out, "  name: %s\n", match.Name)
+	if match.Category != "" {
+		fmt.Fprintf(c.Out, "  category: %s\n", match.Category)
+	}
+	aliases := strings.Join(match.Aliases, ", ")
+	if aliases == "" {
+		aliases = "none"
+	}
+	fmt.Fprintf(c.Out, "  aliases: %s\n", aliases)
+	if match.Dimension != "" {
+		fmt.Fprintf(c.Out, "  dimensions: %s\n", match.Dimension)
+	}
+	if match.Approximate {
+		text := match.Description
+		if text == "" {
+			text = "yes"
+		}
+		fmt.Fprintf(c.Out, "  approximate: %s\n", text)
+	}
+	if match.DensityUnit != "" {
+		fmt.Fprintf(c.Out, "  density: %g %s\n", match.DensityValue, match.DensityUnit)
+	}
+	if match.Description != "" && !match.Approximate {
+		fmt.Fprintf(c.Out, "  note: %s\n", match.Description)
+	}
+	if match.Description != "" && match.Approximate && match.Kind == "ingredient" {
+		fmt.Fprintf(c.Out, "  note: %s\n", match.Description)
+	}
+	if match.MatchedBy != "" && match.MatchedBy != "key" {
+		fmt.Fprintf(c.Out, "  matched: %s %q\n", match.MatchedBy, match.MatchedString)
+	}
+}
+
+func (c *CLI) searchHelp() {
+	fmt.Fprint(c.Out, `convunits search finds units, aliases, scales, formulas, ingredients, lookup entries, and commands.
+
+Usage:
+  convunits search QUERY [--all] [--kind KIND] [--json]
+  convunits --json search QUERY
+
+Examples:
+  convunits search jupiter
+  convunits search flour
+  convunits search beaufort
+  convunits search '#40'
+  convunits search schwarzschild --kind formula
+
+Default output is limited to 20 results. Use --all to show every match.
+`)
+}
+
+func (c *CLI) aliasesHelp() {
+	fmt.Fprint(c.Out, `convunits aliases shows canonical names, aliases, dimensions, and notes.
+
+Usage:
+  convunits aliases UNIT-OR-ALIAS
+  convunits aliases --all
+  convunits aliases --json UNIT-OR-ALIAS
+  convunits --json aliases UNIT-OR-ALIAS
+
+Examples:
+  convunits aliases mph
+  convunits aliases Rj
+  convunits aliases flour
+  convunits aliases --all
+`)
+}
+
+func formatDiscoveryDetails(aliases []string, description string, approximate bool, dimension string) string {
+	var parts []string
+	if len(aliases) > 0 {
+		parts = append(parts, "aliases: "+strings.Join(aliases, ", "))
+	}
+	if description != "" {
+		parts = append(parts, description)
+	}
+	if dimension != "" && !strings.Contains(description, "dimensions:") {
+		parts = append(parts, "dimensions: "+dimension)
+	}
+	if approximate {
+		parts = append(parts, "approximate")
+	}
+	return strings.Join(parts, "; ")
 }
 
 type compareOutput struct {
@@ -1653,6 +1893,8 @@ Usage:
   convunits [--precision N] [--scientific] [--json] <value><input-unit> <output-unit>
   convunits [options] <value> <input-unit> <output-unit>
   convunits units [category]
+  convunits search QUERY
+  convunits aliases UNIT-OR-ALIAS
   convunits compare <valueunit> <target-unit>...
   convunits eval '<expression>'
   convunits explain <valueunit> <output-unit>
@@ -1680,6 +1922,8 @@ Examples:
   convunits 60mph km/h
   convunits 1N 'kg*m/s^2'
   convunits 1Rsun km
+  convunits search jupiter
+  convunits aliases Rj
   convunits compare 38in banana smoot Rj
   convunits eval '2*pi*1Re -> km'
   convunits explain 60mph m/s
@@ -1697,7 +1941,7 @@ Examples:
   convunits --json 10kg lb
 
 Unit expressions support *, /, integer powers, and parentheses. Parsing is case-sensitive.
-Use "convunits units", "convunits scales", and "convunits formulas" for listings.
+Use "convunits search", "convunits units", "convunits scales", and "convunits formulas" for listings.
 See README.md and SUPPORTED_UNITS.md for detailed examples and limitations.
 `)
 }

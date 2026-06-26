@@ -36,6 +36,8 @@ convunits 60mph km/h
 convunits compare 38in banana Rj
 convunits eval '1kg*c^2 -> J'
 convunits explain 60mph m/s
+convunits search jupiter
+convunits aliases Rj
 convunits scale 7 pH mol/L
 convunits recipe 1cup flour g
 convunits formula escape-velocity --mass 1Mearth --radius 1Re km/s
@@ -44,6 +46,25 @@ convunits formula escape-velocity --mass 1Mearth --radius 1Re km/s
 Use `--help` with `compare`, `recipe`, `eval`, `explain`, `formula`, and
 `scale` for command-specific help. Lookup commands also accept concise help,
 for example `convunits wire --help`.
+
+## Discovery
+
+Search the growing catalog from the CLI:
+
+```sh
+convunits search jupiter
+convunits search flour
+convunits search beaufort
+convunits search '#40'
+convunits aliases Rj
+convunits aliases flour
+```
+
+Search covers unit symbols, names, aliases, categories, approximate notes,
+scales, recipe ingredients, formula names, paper sizes, lookup tables where
+practical, and command names. Use `--all` to show more than the default result
+limit, `--kind unit` or another kind to filter, and `--json` for structured
+output.
 
 ## Basic conversions
 

@@ -54,6 +54,130 @@ func TestJSON(t *testing.T) {
 	}
 }
 
+func TestDiscoverySearch(t *testing.T) {
+	tests := []struct {
+		args  []string
+		wants []string
+	}{
+		{[]string{"search", "jupiter"}, []string{"unit", "Rj", "Mjup"}},
+		{[]string{"search", "flour"}, []string{"ingredient", "all-purpose-flour"}},
+		{[]string{"search", "mph"}, []string{"unit", "mph"}},
+		{[]string{"search", "beaufort"}, []string{"scale", "beaufort"}},
+		{[]string{"search", "schwarzschild"}, []string{"formula", "schwarzschild-radius"}},
+		{[]string{"search", "cubit"}, []string{"unit", "cubit"}},
+		{[]string{"search", "#40"}, []string{"sieve", "#40"}},
+		{[]string{"search", "a4"}, []string{"paper", "a4"}},
+		{[]string{"search", "eval"}, []string{"command", "eval"}},
+		{[]string{"search", "jupiter", "--all"}, []string{"Rj", "Mjup"}},
+		{[]string{"search", "jupiter", "--kind", "unit"}, []string{"unit", "Rj", "Mjup"}},
+	}
+	for _, tt := range tests {
+		code, out, err := run(tt.args...)
+		if code != 0 {
+			t.Fatalf("%v: code=%d err=%q", tt.args, code, err)
+		}
+		for _, want := range tt.wants {
+			if !strings.Contains(out, want) {
+				t.Errorf("%v: output missing %q:\n%s", tt.args, want, out)
+			}
+		}
+	}
+}
+
+func TestDiscoveryAliases(t *testing.T) {
+	tests := []struct {
+		args  []string
+		wants []string
+	}{
+		{[]string{"aliases", "mph"}, []string{"kind: unit", "mile per hour", "dimensions: m/s"}},
+		{[]string{"aliases", "Rj"}, []string{"Jupiter mean radius", "jupiterradius", "approximate"}},
+		{[]string{"aliases", "flour"}, []string{"kind: ingredient", "canonical: all-purpose-flour", "density: 508 kg/m^3"}},
+		{[]string{"aliases", "--all"}, []string{"unit", "mph", "ingredient", "all-purpose-flour"}},
+	}
+	for _, tt := range tests {
+		code, out, err := run(tt.args...)
+		if code != 0 {
+			t.Fatalf("%v: code=%d err=%q", tt.args, code, err)
+		}
+		for _, want := range tt.wants {
+			if !strings.Contains(out, want) {
+				t.Errorf("%v: output missing %q:\n%s", tt.args, want, out)
+			}
+		}
+	}
+
+	code, _, err := run("aliases", "not-a-known-entry")
+	if code == 0 || !strings.Contains(err, "no aliases or catalog entry") {
+		t.Fatalf("unknown alias: code=%d err=%q", code, err)
+	}
+}
+
+func TestDiscoveryJSON(t *testing.T) {
+	code, out, err := run("--json", "search", "jupiter")
+	if code != 0 {
+		t.Fatalf("search json: code=%d err=%q", code, err)
+	}
+	var search struct {
+		Command string
+		Query   string
+		Results []struct {
+			Kind string
+			Key  string
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &search); err != nil {
+		t.Fatal(err)
+	}
+	if search.Command != "search" || search.Query != "jupiter" || !hasDiscoveryKey(search.Results, "unit", "Rj") {
+		t.Fatalf("unexpected search json: %+v", search)
+	}
+
+	code, out, err = run("aliases", "--json", "Rj")
+	if code != 0 {
+		t.Fatalf("aliases json: code=%d err=%q", code, err)
+	}
+	var aliases struct {
+		Command string
+		Query   string
+		Matches []struct {
+			Kind      string
+			Key       string
+			Dimension string
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &aliases); err != nil {
+		t.Fatal(err)
+	}
+	if aliases.Command != "aliases" || aliases.Query != "Rj" || !hasAliasKey(aliases.Matches, "unit", "Rj") {
+		t.Fatalf("unexpected aliases json: %+v", aliases)
+	}
+}
+
+func hasDiscoveryKey(results []struct {
+	Kind string
+	Key  string
+}, kind, key string) bool {
+	for _, result := range results {
+		if result.Kind == kind && result.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAliasKey(results []struct {
+	Kind      string
+	Key       string
+	Dimension string
+}, kind, key string) bool {
+	for _, result := range results {
+		if result.Kind == kind && result.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCompareCLI(t *testing.T) {
 	tests := []struct {
 		args []string
