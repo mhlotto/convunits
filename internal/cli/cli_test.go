@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 )
@@ -208,6 +209,34 @@ func TestPaperSizeCLI(t *testing.T) {
 	}
 }
 
+func TestPaperJSON(t *testing.T) {
+	for _, args := range [][]string{
+		{"--json", "paper", "a4", "mm"},
+		{"paper", "--json", "a4", "mm"},
+	} {
+		code, out, err := run(args...)
+		if code != 0 {
+			t.Fatalf("%v: code=%d err=%q", args, code, err)
+		}
+		var got struct {
+			Command string
+			Input   struct {
+				Size string
+			}
+			Output struct {
+				Width, Height float64
+				Unit          string
+			}
+		}
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+		if got.Command != "paper" || got.Input.Size != "a4" || got.Output.Width != 210 || got.Output.Height != 297 || got.Output.Unit != "mm" {
+			t.Fatalf("%v: %+v", args, got)
+		}
+	}
+}
+
 func TestPaperErrorsAndListings(t *testing.T) {
 	for _, tt := range []struct {
 		args     []string
@@ -252,6 +281,31 @@ func TestWireCLI(t *testing.T) {
 	}
 }
 
+func TestWireJSON(t *testing.T) {
+	code, out, err := run("--json", "wire", "12awg", "mm")
+	if code != 0 {
+		t.Fatalf("code=%d err=%q", code, err)
+	}
+	var got struct {
+		Command string
+		Input   struct {
+			Gauge, System string
+		}
+		Output struct {
+			Value       float64
+			Unit        string
+			Quantity    string
+			Approximate bool
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Command != "wire" || got.Input.Gauge != "12awg" || got.Input.System != "AWG" || got.Output.Unit != "mm" || got.Output.Quantity != "diameter" || !got.Output.Approximate || math.Abs(got.Output.Value-2.052525388) > 1e-9 {
+		t.Fatalf("%+v", got)
+	}
+}
+
 func TestDrillCLI(t *testing.T) {
 	tests := []struct{ size, unit, want string }{
 		{"#7", "mm", "approximately 5.1054 mm diameter\n"},
@@ -280,6 +334,31 @@ func TestDrillCLI(t *testing.T) {
 	}
 }
 
+func TestDrillJSON(t *testing.T) {
+	code, out, err := run("--json", "drill", "#7", "mm")
+	if code != 0 {
+		t.Fatalf("code=%d err=%q", code, err)
+	}
+	var got struct {
+		Command string
+		Input   struct {
+			Size string
+		}
+		Output struct {
+			Value       float64
+			Unit        string
+			Quantity    string
+			Approximate bool
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Command != "drill" || got.Input.Size != "#7" || got.Output.Unit != "mm" || got.Output.Quantity != "diameter" || !got.Output.Approximate || math.Abs(got.Output.Value-5.1054) > 1e-12 {
+		t.Fatalf("%+v", got)
+	}
+}
+
 func TestSieveCLI(t *testing.T) {
 	tests := []struct{ size, unit, want string }{
 		{"#40", "mm", "approximately 0.425 mm opening\n"},
@@ -301,6 +380,31 @@ func TestSieveCLI(t *testing.T) {
 	code, out, err := run("sieves")
 	if code != 0 || !strings.Contains(out, "#400") {
 		t.Fatalf("code=%d out=%q err=%q", code, out, err)
+	}
+}
+
+func TestSieveJSON(t *testing.T) {
+	code, out, err := run("--json", "sieve", "#40", "mm")
+	if code != 0 {
+		t.Fatalf("code=%d err=%q", code, err)
+	}
+	var got struct {
+		Command string
+		Input   struct {
+			Size string
+		}
+		Output struct {
+			Value       float64
+			Unit        string
+			Quantity    string
+			Approximate bool
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Command != "sieve" || got.Input.Size != "#40" || got.Output.Unit != "mm" || got.Output.Quantity != "opening" || !got.Output.Approximate || math.Abs(got.Output.Value-0.425) > 1e-12 {
+		t.Fatalf("%+v", got)
 	}
 }
 
@@ -338,6 +442,33 @@ func TestFormulaCLI(t *testing.T) {
 	code, out, err := run("formulas")
 	if code != 0 || !strings.Contains(out, "escape-velocity") || !strings.Contains(out, "bmi") {
 		t.Fatalf("code=%d out=%q err=%q", code, out, err)
+	}
+}
+
+func TestFormulaJSON(t *testing.T) {
+	for _, args := range [][]string{
+		{"--json", "formula", "bmi", "--mass", "180lb", "--height", "6ft", "bmi"},
+		{"formula", "--json", "bmi", "--mass", "180lb", "--height", "6ft", "bmi"},
+	} {
+		code, out, err := run(args...)
+		if code != 0 {
+			t.Fatalf("%v: code=%d err=%q", args, code, err)
+		}
+		var got struct {
+			Command string
+			Formula string
+			Inputs  map[string]string
+			Output  struct {
+				Value float64
+				Unit  string
+			}
+		}
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+		if got.Command != "formula" || got.Formula != "bmi" || got.Inputs["mass"] != "180lb" || got.Inputs["height"] != "6ft" || got.Output.Unit != "bmi" || math.Abs(got.Output.Value-24.41213818) > 1e-8 {
+			t.Fatalf("%v: %+v", args, got)
+		}
 	}
 }
 

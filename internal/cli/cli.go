@@ -31,45 +31,54 @@ func (c *CLI) Run(args []string) int {
 		c.help()
 		return 0
 	}
+	globalJSON := false
+	if args[0] == "--json" {
+		globalJSON = true
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		fmt.Fprintln(c.Err, "error: usage: convunits [options] <value><input-unit> <output-unit>")
+		return 2
+	}
 	if args[0] == "units" {
 		return c.listUnits(args[1:])
 	}
 	if args[0] == "solve" {
-		return c.runSolve(args[1:])
+		return c.runSolve(args[1:], globalJSON)
 	}
 	if args[0] == "scale" {
-		return c.runScale(args[1:])
+		return c.runScale(args[1:], globalJSON)
 	}
 	if args[0] == "scales" {
 		return c.listScales(args[1:])
 	}
 	if args[0] == "size" || args[0] == "scale-size" || args[0] == "paper" {
-		return c.runSize(args[1:])
+		return c.runSize(args[1:], globalJSON)
 	}
 	if args[0] == "papers" {
 		return c.listPapers(args[1:])
 	}
 	if args[0] == "wire" {
-		return c.runWire(args[1:])
+		return c.runWire(args[1:], globalJSON)
 	}
 	if args[0] == "wires" {
 		fmt.Fprintln(c.Out, wire.SyntaxHelp())
 		return 0
 	}
 	if args[0] == "drill" {
-		return c.runDrill(args[1:])
+		return c.runDrill(args[1:], globalJSON)
 	}
 	if args[0] == "drills" {
 		return c.listDrills(args[1:])
 	}
 	if args[0] == "sieve" {
-		return c.runSieve(args[1:])
+		return c.runSieve(args[1:], globalJSON)
 	}
 	if args[0] == "sieves" {
 		return c.listSieves(args[1:])
 	}
 	if args[0] == "formula" {
-		return c.runFormula(args[1:])
+		return c.runFormula(args[1:], globalJSON)
 	}
 	if args[0] == "formulas" {
 		return c.listFormulas(args[1:])
@@ -81,7 +90,7 @@ func (c *CLI) Run(args []string) int {
 	fs.SetOutput(c.Err)
 	precision := fs.Int("precision", 10, "significant digits")
 	scientific := fs.Bool("scientific", false, "use scientific notation")
-	asJSON := fs.Bool("json", false, "emit JSON")
+	asJSON := fs.Bool("json", globalJSON, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -122,12 +131,13 @@ func (c *CLI) Run(args []string) int {
 	return 0
 }
 
-func (c *CLI) runScale(args []string) int {
+func (c *CLI) runScale(args []string, globalJSON bool) int {
 	precision, scientific, asJSON, positional, err := parseScaleOptions(args)
 	if err != nil {
 		fmt.Fprintln(c.Err, "error:", err)
 		return 2
 	}
+	asJSON = asJSON || globalJSON
 	if len(positional) != 3 {
 		fmt.Fprintln(c.Err, "error: usage: convunits scale [options] VALUE INPUT-SCALE OUTPUT-SCALE")
 		return 2
@@ -207,6 +217,29 @@ func parseScaleOptions(args []string) (int, bool, bool, []string, error) {
 	return precision, scientific, asJSON, positional, nil
 }
 
+func parseJSONOnly(args []string) (bool, []string) {
+	asJSON := false
+	var positional []string
+	for _, arg := range args {
+		if arg == "--json" {
+			asJSON = true
+			continue
+		}
+		positional = append(positional, arg)
+	}
+	return asJSON, positional
+}
+
+func (c *CLI) encodeJSON(payload any) int {
+	enc := json.NewEncoder(c.Out)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(payload); err != nil {
+		fmt.Fprintln(c.Err, "error:", err)
+		return 1
+	}
+	return 0
+}
+
 func formatScaleResult(result scales.Result, precision int, scientific bool) string {
 	format := func(value float64) string { return units.FormatValue(value, precision, scientific) }
 	switch {
@@ -250,36 +283,54 @@ func (c *CLI) listScales(args []string) int {
 	return 0
 }
 
-func (c *CLI) runSize(args []string) int {
-	if len(args) != 2 {
+func (c *CLI) runSize(args []string, globalJSON bool) int {
+	asJSON, positional := parseJSONOnly(args)
+	asJSON = asJSON || globalJSON
+	if len(positional) != 2 {
 		fmt.Fprintln(c.Err, "error: usage: convunits size PAPER-SIZE OUTPUT-LENGTH-UNIT")
 		return 2
 	}
 	scaleRegistry := scales.NewRegistry()
-	if scaleRegistry.IsScale(args[0]) {
-		fmt.Fprintf(c.Err, "error: scalar scale %q cannot be used as a paper size; use convunits scale\n", args[0])
+	if scaleRegistry.IsScale(positional[0]) {
+		fmt.Fprintf(c.Err, "error: scalar scale %q cannot be used as a paper size; use convunits scale\n", positional[0])
 		return 1
 	}
-	size, err := scales.LookupPaperSize(args[0])
+	size, err := scales.LookupPaperSize(positional[0])
 	if err != nil {
 		fmt.Fprintln(c.Err, "error:", err)
 		return 1
 	}
-	width, err := c.Registry.Convert(size.WidthM, "m", args[1])
+	width, err := c.Registry.Convert(size.WidthM, "m", positional[1])
 	if err != nil {
 		fmt.Fprintln(c.Err, "error: paper output unit must be length:", err)
 		return 1
 	}
-	height, err := c.Registry.Convert(size.HeightM, "m", args[1])
+	height, err := c.Registry.Convert(size.HeightM, "m", positional[1])
 	if err != nil {
 		fmt.Fprintln(c.Err, "error: paper output unit must be length:", err)
 		return 1
+	}
+	if asJSON {
+		payload := struct {
+			Command string `json:"command"`
+			Input   struct {
+				Size string `json:"size"`
+			} `json:"input"`
+			Output struct {
+				Width  float64 `json:"width"`
+				Height float64 `json:"height"`
+				Unit   string  `json:"unit"`
+			} `json:"output"`
+		}{Command: "paper"}
+		payload.Input.Size = positional[0]
+		payload.Output.Width, payload.Output.Height, payload.Output.Unit = width.Value, height.Value, positional[1]
+		return c.encodeJSON(payload)
 	}
 	prefix := ""
 	if size.Approximate {
 		prefix = "approximately "
 	}
-	fmt.Fprintf(c.Out, "%s%s x %s %s\n", prefix, units.FormatValue(width.Value, 10, false), units.FormatValue(height.Value, 10, false), args[1])
+	fmt.Fprintf(c.Out, "%s%s x %s %s\n", prefix, units.FormatValue(width.Value, 10, false), units.FormatValue(height.Value, 10, false), positional[1])
 	return 0
 }
 
@@ -309,12 +360,14 @@ func (c *CLI) listPapers(args []string) int {
 	return 0
 }
 
-func (c *CLI) runWire(args []string) int {
-	if len(args) != 2 {
+func (c *CLI) runWire(args []string, globalJSON bool) int {
+	asJSON, positional := parseJSONOnly(args)
+	asJSON = asJSON || globalJSON
+	if len(positional) != 2 {
 		fmt.Fprintln(c.Err, "error: usage: convunits wire GAUGE OUTPUT-LENGTH-UNIT")
 		return 2
 	}
-	gauge, err := wire.ParseGauge(args[0])
+	gauge, err := wire.ParseGauge(positional[0])
 	if err != nil {
 		fmt.Fprintln(c.Err, "error:", err)
 		return 1
@@ -324,40 +377,71 @@ func (c *CLI) runWire(args []string) int {
 		fmt.Fprintln(c.Err, "error:", err)
 		return 1
 	}
-	return c.printLengthResult(meters, args[1], "diameter", true)
+	return c.printLengthResult(meters, positional[1], "wire", positional[0], "diameter", true, asJSON)
 }
 
-func (c *CLI) runDrill(args []string) int {
-	if len(args) != 2 {
+func (c *CLI) runDrill(args []string, globalJSON bool) int {
+	asJSON, positional := parseJSONOnly(args)
+	asJSON = asJSON || globalJSON
+	if len(positional) != 2 {
 		fmt.Fprintln(c.Err, "error: usage: convunits drill SIZE OUTPUT-LENGTH-UNIT")
 		return 2
 	}
-	meters, err := drill.DiameterMeters(args[0])
+	meters, err := drill.DiameterMeters(positional[0])
 	if err != nil {
 		fmt.Fprintln(c.Err, "error:", err)
 		return 1
 	}
-	return c.printLengthResult(meters, args[1], "diameter", true)
+	return c.printLengthResult(meters, positional[1], "drill", positional[0], "diameter", true, asJSON)
 }
 
-func (c *CLI) runSieve(args []string) int {
-	if len(args) != 2 {
+func (c *CLI) runSieve(args []string, globalJSON bool) int {
+	asJSON, positional := parseJSONOnly(args)
+	asJSON = asJSON || globalJSON
+	if len(positional) != 2 {
 		fmt.Fprintln(c.Err, "error: usage: convunits sieve SIZE OUTPUT-LENGTH-UNIT")
 		return 2
 	}
-	meters, err := sieve.OpeningMeters(args[0])
+	meters, err := sieve.OpeningMeters(positional[0])
 	if err != nil {
 		fmt.Fprintln(c.Err, "error:", err)
 		return 1
 	}
-	return c.printLengthResult(meters, args[1], "opening", true)
+	return c.printLengthResult(meters, positional[1], "sieve", positional[0], "opening", true, asJSON)
 }
 
-func (c *CLI) printLengthResult(meters float64, outputUnit, label string, approximate bool) int {
+func (c *CLI) printLengthResult(meters float64, outputUnit, command, input, label string, approximate, asJSON bool) int {
 	converted, err := c.Registry.Convert(meters, "m", outputUnit)
 	if err != nil {
 		fmt.Fprintf(c.Err, "error: output unit for %s must be length: %v\n", label, err)
 		return 1
+	}
+	if asJSON {
+		payload := struct {
+			Command string `json:"command"`
+			Input   struct {
+				Size   string `json:"size,omitempty"`
+				Gauge  string `json:"gauge,omitempty"`
+				System string `json:"system,omitempty"`
+			} `json:"input"`
+			Output struct {
+				Value       float64 `json:"value"`
+				Unit        string  `json:"unit"`
+				Quantity    string  `json:"quantity"`
+				Approximate bool    `json:"approximate"`
+			} `json:"output"`
+		}{Command: command}
+		if command == "wire" {
+			payload.Input.Gauge = input
+			payload.Input.System = "AWG"
+		} else {
+			payload.Input.Size = input
+		}
+		payload.Output.Value = converted.Value
+		payload.Output.Unit = outputUnit
+		payload.Output.Quantity = label
+		payload.Output.Approximate = approximate
+		return c.encodeJSON(payload)
 	}
 	prefix := ""
 	if approximate {
@@ -408,7 +492,12 @@ func (c *CLI) listSieves(args []string) int {
 	return 0
 }
 
-func (c *CLI) runFormula(args []string) int {
+func (c *CLI) runFormula(args []string, globalJSON bool) int {
+	asJSON := globalJSON
+	if len(args) > 0 && args[0] == "--json" {
+		asJSON = true
+		args = args[1:]
+	}
 	if len(args) < 2 {
 		fmt.Fprintln(c.Err, "error: usage: convunits formula NAME [--ARG VALUEUNIT ...] OUTPUT-UNIT")
 		return 2
@@ -421,6 +510,10 @@ func (c *CLI) runFormula(args []string) int {
 		arg := args[i]
 		if !strings.HasPrefix(arg, "--") {
 			positional = append(positional, arg)
+			continue
+		}
+		if arg == "--json" {
+			asJSON = true
 			continue
 		}
 		keyValue := strings.TrimPrefix(arg, "--")
@@ -460,6 +553,19 @@ func (c *CLI) runFormula(args []string) int {
 	if err != nil {
 		fmt.Fprintln(c.Err, "error:", err)
 		return 1
+	}
+	if asJSON {
+		payload := struct {
+			Command string            `json:"command"`
+			Formula string            `json:"formula"`
+			Inputs  map[string]string `json:"inputs"`
+			Output  struct {
+				Value float64 `json:"value"`
+				Unit  string  `json:"unit"`
+			} `json:"output"`
+		}{Command: "formula", Formula: name, Inputs: rawInputs}
+		payload.Output.Value, payload.Output.Unit = result.Value, result.Unit
+		return c.encodeJSON(payload)
 	}
 	prefix := ""
 	if result.Approximate {
@@ -515,10 +621,10 @@ func (c *CLI) runShoe(args []string) int {
 	return 0
 }
 
-func (c *CLI) runSolve(args []string) int {
+func (c *CLI) runSolve(args []string, globalJSON bool) int {
 	precision := 10
 	scientific := false
-	asJSON := false
+	asJSON := globalJSON
 	givens := make(map[string]solve.Quantity)
 	var positional []string
 
@@ -765,7 +871,7 @@ Usage:
   convunits solve VALUEUNIT OUTPUTUNIT --given NAME=VALUEUNIT ...
   convunits scale VALUE INPUT-SCALE OUTPUT-SCALE
   convunits scales [category]
-  convunits size PAPER-SIZE OUTPUT-LENGTH-UNIT
+  convunits size PAPER-SIZE OUTPUT-LENGTH-UNIT   alias for paper
   convunits shoe SYSTEM SIZE OUTPUT-LENGTH-UNIT
   convunits shoe systems
   convunits paper PAPER-SIZE OUTPUT-LENGTH-UNIT
